@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J-ALERT 受信箱</title>
+<!-- 管理UI: デジタル庁デザインシステム (DADS) に準拠した配色・タイポgrafィ -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* DADS-aligned tokens. Light is default; dark overrides below. */
+  :root, :root[data-theme="light"]{
+    --bg:#ffffff; --surface:#f0f0f0; --surface-2:#f8f8f8;
+    --text:#1a1a1c; --text-sub:#5a5a63; --text-weak:#767680;
+    --border:#d8d8db; --border-strong:#a8a8b3;
+    --primary:#0017c1; --primary-hover:#00118f; --primary-bg:#f0f3ff;
+    --focus:#ffb60a; --success:#197a4b;
+    --advisory:#f2c200; --advisory-ink:#1a1a1c;
+    --warning:#ce0000; --emergency:#9a0e8e; --clear:#767680;
+  }
+  :root[data-theme="dark"]{
+    --bg:#16181d; --surface:#22252c; --surface-2:#1c1f25;
+    --text:#e7e8ea; --text-sub:#a4a8b3; --text-weak:#7c818d;
+    --border:#333741; --border-strong:#4a4f5a;
+    --primary:#8aa0ff; --primary-hover:#a6b6ff; --primary-bg:#22273a;
+    --focus:#ffd43b; --success:#5fd39a;
+    --advisory:#e7b900; --advisory-ink:#1a1a1c;
+    --warning:#ff5a4d; --emergency:#d46bd0; --clear:#7c818d;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#16181d; --surface:#22252c; --surface-2:#1c1f25;
+      --text:#e7e8ea; --text-sub:#a4a8b3; --text-weak:#7c818d;
+      --border:#333741; --border-strong:#4a4f5a;
+      --primary:#8aa0ff; --primary-hover:#a6b6ff; --primary-bg:#22273a;
+      --focus:#ffd43b; --success:#5fd39a;
+      --advisory:#e7b900; --advisory-ink:#1a1a1c;
+      --warning:#ff5a4d; --emergency:#d46bd0; --clear:#7c818d;
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{font-family:"Noto Sans JP",system-ui,sans-serif;background:var(--bg);color:var(--text);
+    -webkit-font-smoothing:antialiased;font-size:16px;line-height:1.7}
+  a{color:var(--primary)}
+  :focus-visible{outline:3px solid var(--focus);outline-offset:1px;border-radius:4px}
+
+  /* App bar */
+  .top{display:flex;align-items:center;gap:20px;padding:12px 24px;background:var(--bg);
+    border-bottom:2px solid var(--primary);position:sticky;top:0;z-index:5}
+  .top .title{font-weight:700;font-size:18px;letter-spacing:.02em;display:flex;align-items:baseline;gap:10px}
+  .top .title small{font-weight:400;color:var(--text-sub);font-size:13px}
+  .status{display:inline-flex;align-items:center;gap:7px;color:var(--text-sub);font-size:14px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--text-weak)}
+  .dot.on{background:var(--success)} .dot.off{background:var(--warning)}
+  .status b{color:var(--text)}
+  .top .spacer{flex:1}
+
+  .btn{font-family:inherit;font-size:14px;cursor:pointer;border-radius:8px;padding:8px 16px;
+    border:1px solid var(--border-strong);background:var(--bg);color:var(--text);font-weight:500;text-decoration:none;
+    display:inline-flex;align-items:center;gap:6px;line-height:1}
+  .btn:hover{background:var(--surface)}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+  .btn.primary:hover{background:var(--primary-hover)}
+  .pill{background:var(--warning);color:#fff;border-radius:999px;padding:2px 10px;font-size:13px;font-weight:700;min-width:24px;text-align:center;display:inline-block}
+  .pill.zero{background:var(--surface);color:var(--text-sub)}
+
+  .wrap{display:grid;grid-template-columns:minmax(340px,460px) 1fr;height:calc(100vh - 55px)}
+  .list{overflow-y:auto;border-right:1px solid var(--border);background:var(--surface-2)}
+  .empty{color:var(--text-sub);text-align:center;padding:64px 20px}
+
+  /* list rows */
+  .row{display:grid;grid-template-columns:4px 1fr auto;gap:14px;padding:14px 18px 14px 0;
+    border-bottom:1px solid var(--border);cursor:pointer;background:var(--bg);position:relative}
+  .row:hover{background:var(--surface-2)}
+  .row.sel{background:var(--primary-bg);box-shadow:inset 4px 0 0 var(--primary)}
+  .row .bar{border-radius:0 4px 4px 0}
+  .row.sel .bar{visibility:hidden}
+  .row .main{min-width:0}
+  .row .line1{display:flex;align-items:center;gap:8px}
+  .sevtag{font-size:12px;font-weight:700;padding:2px 9px;border-radius:6px;color:#fff;white-space:nowrap}
+  .row .area{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+  .row.unread .area{font-weight:700}
+  .row.read{background:var(--surface-2)}
+  .row.read .area,.row.read .line2{color:var(--text-sub)}
+  .it{font-size:12px;color:var(--text-sub);border:1px solid var(--border);border-radius:5px;padding:1px 7px;background:var(--bg)}
+  .row .line2{color:var(--text-sub);font-size:14px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .time{color:var(--text-sub);font-size:13px;text-align:right;white-space:nowrap;padding-top:2px}
+  .unreaddot{width:9px;height:9px;border-radius:50%;background:var(--primary);position:absolute;left:7px;top:20px}
+  .row.read .unreaddot{display:none}
+
+  /* detail */
+  .detail{overflow-y:auto;padding:32px 44px;background:var(--bg)}
+  .detail .ph{color:var(--text-sub);text-align:center;margin-top:18vh}
+  .dhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .dhead .sevtag{font-size:15px;padding:5px 16px}
+  .darea{font-size:30px;font-weight:700;margin:16px 0 6px;line-height:1.3}
+  .dsub{color:var(--text-sub);font-size:14px;display:flex;gap:8px 24px;flex-wrap:wrap;
+    border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:14px 0;margin:14px 0 22px}
+  .dsub b{color:var(--text);font-weight:500;margin-left:6px}
+  .sech{font-size:13px;font-weight:700;color:var(--text-sub);letter-spacing:.04em;margin:0 0 10px}
+  .kinds{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 26px}
+  .kind{font-weight:700;border:1px solid var(--border-strong);border-radius:8px;padding:8px 16px;font-size:18px;background:var(--surface-2)}
+  .headline{font-size:18px;line-height:1.8;margin:0 0 28px;padding:16px 18px;background:var(--surface-2);
+    border-left:4px solid var(--border-strong);border-radius:0 8px 8px 0}
+  .daction{display:flex;gap:12px;margin:0 0 24px;flex-wrap:wrap}
+  .xml{background:#1a1a1c;color:#e8e8ea;border-radius:8px;padding:16px;
+    font-family:ui-monospace,"SFMono-Regular",Consolas,monospace;font-size:12.5px;line-height:1.6;
+    white-space:pre-wrap;word-break:break-all;max-height:48vh;overflow:auto;display:none}
+  .xml.show{display:block}
+</style>
+</head>
+<body>
+  <header class="top">
+    <span class="title">J-ALERT 受信箱<small>受信履歴 / 管理</small></span>
+    <span class="status"><span id="dot" class="dot"></span><span id="conn">—</span></span>
+    <span class="status">受信 <b id="total">0</b> 件</span>
+    <span class="spacer"></span>
+    <span class="status">未読 <span id="unread" class="pill zero">0</span></span>
+    <button id="themeBtn" class="btn" title="表示テーマ切替" aria-label="表示テーマ切替">🌓 テーマ</button>
+    <button id="markAll" class="btn">すべて既読にする</button>
+    <a class="btn primary" href="/">表示画面へ</a>
+  </header>
+
+  <div class="wrap">
+    <div id="list" class="list" role="list"><div class="empty">受信待機中…</div></div>
+    <div id="detail" class="detail"><div class="ph">左の一覧から項目を選択してください</div></div>
+  </div>
+
+<script>
+const $ = s => document.querySelector(s);
+
+// ---- theme (light/dark, follows system unless overridden) ----
+const THEME_KEY="jalert.theme";
+function applyTheme(t){
+  if(t==="light"||t==="dark") document.documentElement.setAttribute("data-theme",t);
+  else document.documentElement.removeAttribute("data-theme");
+}
+function curTheme(){
+  return localStorage.getItem(THEME_KEY)
+      || (matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");
+}
+applyTheme(localStorage.getItem(THEME_KEY)||"system");
+
+const SEVCOLOR = {0:"var(--clear)",1:"var(--advisory)",2:"var(--warning)",3:"var(--emergency)"};
+const SEVINK   = {1:"var(--advisory-ink)"};
+let items=[], selId=null;
+
+function pad(n){return String(n).padStart(2,"0");}
+function fmt(ms){if(!ms)return"—";const d=new Date(ms);
+  return `${d.getMonth()+1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;}
+function fmtRep(iso){if(!iso)return"—";const d=new Date(iso);if(isNaN(d))return iso;
+  return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;}
+function sevtag(it){
+  return `<span class="sevtag" style="background:${SEVCOLOR[it.severity]};color:${SEVINK[it.severity]||"#fff"}">${esc(it.severityLabel)}</span>`;
+}
+
+function render(s){
+  items=s.inbox||[];
+  const r=s.receiver||{};
+  $("#dot").className="dot "+(r.connected?"on":"off");
+  $("#conn").textContent=r.connected?"接続中":"切断";
+  $("#total").textContent=r.totalLines||0;
+  const u=$("#unread"); u.textContent=s.unread||0; u.classList.toggle("zero",!(s.unread>0));
+  renderList();
+  if(selId!=null){ const it=items.find(i=>i.id===selId); if(it) renderDetail(it); }
+}
+
+function renderList(){
+  const el=$("#list");
+  if(!items.length){ el.innerHTML='<div class="empty">受信した電文はまだありません</div>'; return; }
+  el.innerHTML="";
+  for(const it of items){
+    const row=document.createElement("div");
+    row.className="row "+(it.read?"read":"unread")+(it.id===selId?" sel":"");
+    row.setAttribute("role","listitem"); row.tabIndex=0;
+    const kinds=(it.kinds||[]).join("・")||it.headline||"";
+    row.innerHTML=
+      `<div class="bar" style="background:${SEVCOLOR[it.severity]}"></div>`+
+      `<div class="main"><div class="line1">${sevtag(it)}`+
+        `<span class="area">${esc(it.areaName||it.headTitle||"")}</span>`+
+        `<span class="it">${esc(it.infoType||"")}</span></div>`+
+        `<div class="line2">${esc(kinds)}</div></div>`+
+      `<div class="time">${fmt(it.rxTimeMs)}</div>`+
+      `<div class="unreaddot" title="未読"></div>`;
+    row.onclick=()=>open(it.id);
+    row.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();open(it.id);}};
+    el.appendChild(row);
+  }
+}
+
+function renderDetail(it){
+  const xmlPrev = $("#xmlBox") && $("#xmlBox").classList.contains("show");
+  const sub=[`発表種別<b>${esc(it.infoType||"—")}</b>`,
+             `発表時刻<b>${esc(fmtRep(it.reportTime))}</b>`,
+             `受信時刻<b>${esc(fmt(it.rxTimeMs))}</b>`,
+             `電文時刻<b>${esc(it.packetTime||"—")}</b>`];
+  $("#detail").innerHTML=
+    `<div class="dhead">${sevtag(it)}<span class="it">${esc(it.title||"")}</span></div>`+
+    `<h1 class="darea">${esc(it.areaName||it.headTitle||"")}</h1>`+
+    `<div class="dsub">${sub.map(x=>`<span>${x}</span>`).join("")}</div>`+
+    ((it.kinds||[]).length?`<p class="sech">発表中の種別</p><div class="kinds">${it.kinds.map(k=>`<span class="kind">${esc(k)}</span>`).join("")}</div>`:"")+
+    (it.headline?`<p class="sech">本文</p><div class="headline">${esc(it.headline)}</div>`:"")+
+    `<div class="daction">`+
+      `<button class="btn" id="xmlBtn">XML原文を表示</button>`+
+      `<a class="btn" href="/api/xml?id=${it.id}" target="_blank" rel="noopener">別タブで開く</a>`+
+      `<button class="btn" id="toggleRead">${it.read?"未読に戻す":"既読にする"}</button>`+
+    `</div>`+
+    `<pre class="xml" id="xmlBox"></pre>`;
+  $("#xmlBtn").onclick=()=>loadXml(it.id);
+  $("#toggleRead").onclick=()=>setRead(it.id,!it.read);
+  if(xmlPrev) loadXml(it.id);
+}
+
+async function loadXml(id){
+  const box=$("#xmlBox");
+  if(box.classList.contains("show")){ box.classList.remove("show"); return; }
+  box.textContent=await (await fetch(`/api/xml?id=${id}`)).text();
+  box.classList.add("show");
+}
+
+function open(id){
+  selId=id;
+  const it=items.find(i=>i.id===id);
+  if(it && !it.read) setRead(id,true); else { renderList(); if(it) renderDetail(it); }
+}
+function setRead(id,read){ fetch(`/api/read?id=${id}&read=${read}`,{method:"POST"}); }
+$("#markAll").onclick=()=>fetch("/api/read?all=true",{method:"POST"});
+$("#themeBtn").onclick=()=>{
+  const next = curTheme()==="dark" ? "light" : "dark";
+  localStorage.setItem(THEME_KEY,next); applyTheme(next);
+};
+
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
+
+function connect(){
+  const es=new EventSource("/events");
+  es.onmessage=e=>{try{render(JSON.parse(e.data));}catch(_){}};
+  es.onerror=()=>{es.close();$("#dot").className="dot off";setTimeout(connect,2000);};
+}
+connect();
+</script>
+</body>
+</html>

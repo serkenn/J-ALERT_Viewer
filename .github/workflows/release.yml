@@ -1,0 +1,68 @@
+name: Release
+
+# Build self-contained single-file binaries for Linux/Windows on every v* tag
+# and attach them to a GitHub Release.
+on:
+  push:
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - rid: linux-x64
+            ext: ''
+            archive: tar.gz
+          - rid: win-x64
+            ext: '.exe'
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish (${{ matrix.rid }})
+        run: >
+          dotnet publish -c Release -r ${{ matrix.rid }}
+          -p:PublishSingleFile=true -p:SelfContained=true
+          -o publish/${{ matrix.rid }}
+
+      - name: Package
+        run: |
+          set -eu
+          NAME="jalert-receiver-${GITHUB_REF_NAME}-${{ matrix.rid }}"
+          mkdir -p dist "stage/$NAME"
+          cp "publish/${{ matrix.rid }}/jalert-receiver${{ matrix.ext }}" "stage/$NAME/"
+          cp README.md "stage/$NAME/"
+          cd stage
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            zip -r "../dist/$NAME.zip" "$NAME"
+          else
+            tar -czf "../dist/$NAME.tar.gz" "$NAME"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.rid }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create / update Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

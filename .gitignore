@@ -1,0 +1,12 @@
+# Build output
+bin/
+obj/
+publish/
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+
+# sample-data (large local captures, not part of the app)
+jalert_test_data/
