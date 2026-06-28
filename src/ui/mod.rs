@@ -8,8 +8,17 @@ use egui::Color32;
 use jalert_receiver::model::Severity;
 use jalert_receiver::source::{SourceConfig, SourceCtl};
 use jalert_receiver::state::AppState;
+use jalert_receiver::web::WebHandle;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+/// Initial web-server settings handed from the CLI/env to the app.
+pub struct WebInit {
+    pub enabled: bool,
+    pub port: u16,
+    pub cloudflared: bool,
+    pub cloudflared_bin: String,
+}
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum View {
@@ -42,6 +51,13 @@ pub struct App {
     pub cfg_host: String,
     pub cfg_port: String,
     pub standby_style: StandbyStyle,
+    // web server (managed at runtime from settings)
+    pub web_handle: Option<WebHandle>,
+    pub web_enabled: bool,
+    pub web_cloudflared: bool,
+    pub cloudflared_bin: String,
+    pub cfg_web_port: String,
+    pub web_err: Option<String>,
 }
 
 impl App {
@@ -50,6 +66,7 @@ impl App {
         state: Arc<Mutex<AppState>>,
         src_cfg: SourceConfig,
         fullscreen: bool,
+        web: WebInit,
     ) -> Self {
         install_fonts(&cc.egui_ctx);
 
@@ -60,7 +77,7 @@ impl App {
         let port = src_cfg.port;
         let source = jalert_receiver::source::spawn(src_cfg, state.clone(), on_change);
 
-        App {
+        let mut app = App {
             state,
             source,
             view: View::Display,
@@ -72,6 +89,42 @@ impl App {
             cfg_host: host,
             cfg_port: port.to_string(),
             standby_style: StandbyStyle::Simple,
+            web_handle: None,
+            web_enabled: web.enabled,
+            web_cloudflared: web.cloudflared,
+            cloudflared_bin: web.cloudflared_bin,
+            cfg_web_port: web.port.to_string(),
+            web_err: None,
+        };
+        if web.enabled {
+            app.apply_web();
+        }
+        app
+    }
+
+    /// (Re)start or stop the web server to match the current settings.
+    fn apply_web(&mut self) {
+        if let Some(h) = self.web_handle.take() {
+            h.stop();
+        }
+        self.web_err = None;
+        if !self.web_enabled {
+            return;
+        }
+        let port = match self.cfg_web_port.trim().parse::<u16>() {
+            Ok(p) => p,
+            Err(_) => {
+                self.web_err = Some("ポートが不正です".into());
+                self.web_enabled = false;
+                return;
+            }
+        };
+        match jalert_receiver::web::start(self.state.clone(), port, self.web_cloudflared, &self.cloudflared_bin) {
+            Ok(h) => self.web_handle = Some(h),
+            Err(e) => {
+                self.web_err = Some(format!("起動失敗: {e}"));
+                self.web_enabled = false;
+            }
         }
     }
 
@@ -226,6 +279,37 @@ impl App {
                     ui.selectable_value(&mut self.standby_style, StandbyStyle::Simple, "シンプル");
                     ui.selectable_value(&mut self.standby_style, StandbyStyle::Jars2000, "JARS2000風");
                 });
+
+                ui.separator();
+                ui.label(egui::RichText::new("Web サーバ (ブラウザ/遠隔表示)").strong());
+                ui.add_space(4.0);
+                let mut dirty = false;
+                dirty |= ui.checkbox(&mut self.web_enabled, "Web サーバを起動する").changed();
+                ui.horizontal(|ui| {
+                    ui.add_enabled_ui(self.web_enabled, |ui| {
+                        ui.label("ポート");
+                        ui.add(egui::TextEdit::singleline(&mut self.cfg_web_port).desired_width(90.0).hint_text("8080"));
+                    });
+                });
+                dirty |= ui
+                    .add_enabled(self.web_enabled, egui::Checkbox::new(&mut self.web_cloudflared, "cloudflared で外部公開 (要インストール)"))
+                    .changed();
+                ui.horizontal(|ui| {
+                    if ui.button("Web設定を適用").clicked() {
+                        self.apply_web();
+                    }
+                    if dirty {
+                        ui.weak("（適用で反映）");
+                    }
+                });
+                if let Some(err) = &self.web_err {
+                    ui.colored_label(Color32::from_rgb(0xe6, 0x00, 0x12), err);
+                } else if let Some(h) = &self.web_handle {
+                    ui.label(egui::RichText::new(format!("● 起動中  http://localhost:{}/  (表示)  /inbox (管理)", h.port)).color(Color32::from_rgb(0x27, 0xd0, 0x7a)));
+                    if h.cloudflared_on {
+                        ui.weak("cloudflared 公開URLはコンソール/ログに表示されます");
+                    }
+                }
 
                 ui.separator();
                 ui.horizontal(|ui| {

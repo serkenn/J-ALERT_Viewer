@@ -5,45 +5,62 @@
 use crate::model::{AlertChannel, InboxItem, Severity};
 use crate::state::AppState;
 use std::io::{BufRead, BufReader, Read};
+use std::process::Child;
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 const INBOX_HTML: &str = include_str!("../wwwroot/inbox.html");
 const INDEX_HTML: &str = include_str!("../wwwroot/index.html");
 
-#[derive(Clone)]
-pub struct WebConfig {
+/// A running web server; can be stopped at runtime (used by the settings UI).
+pub struct WebHandle {
+    server: Arc<tiny_http::Server>,
+    join: Option<JoinHandle<()>>,
+    cloudflared: Option<Child>,
     pub port: u16,
-    pub cloudflared: bool,
-    pub cloudflared_bin: String,
+    pub cloudflared_on: bool,
 }
 
-pub fn spawn(cfg: WebConfig, state: Arc<Mutex<AppState>>) {
-    std::thread::Builder::new()
-        .name("jalert-web".into())
-        .spawn(move || serve(cfg, state))
-        .expect("spawn web thread");
-}
-
-fn serve(cfg: WebConfig, state: Arc<Mutex<AppState>>) {
-    let addr = format!("0.0.0.0:{}", cfg.port);
-    let server = match tiny_http::Server::http(&addr) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("[web] cannot listen on {}: {}", addr, e);
-            return;
+impl WebHandle {
+    pub fn stop(mut self) {
+        self.server.unblock(); // ends incoming_requests()
+        if let Some(j) = self.join.take() {
+            let _ = j.join();
         }
-    };
-    eprintln!("[web] listening on http://localhost:{}/  (受信箱)", cfg.port);
-
-    if cfg.cloudflared {
-        start_cloudflared(&cfg.cloudflared_bin, cfg.port);
+        if let Some(mut c) = self.cloudflared.take() {
+            let _ = c.kill();
+        }
+        eprintln!("[web] stopped");
     }
+}
 
-    for mut req in server.incoming_requests() {
-        let (path, query) = split_url(req.url());
-        let resp = route(&path, &query, &mut req, &state);
-        let _ = req.respond(resp);
-    }
+/// Start the web server on `0.0.0.0:port`. Returns an error if the port is taken.
+pub fn start(
+    state: Arc<Mutex<AppState>>,
+    port: u16,
+    cloudflared: bool,
+    cloudflared_bin: &str,
+) -> std::io::Result<WebHandle> {
+    let server = tiny_http::Server::http(("0.0.0.0", port))
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+    let server = Arc::new(server);
+
+    let srv = server.clone();
+    let join = std::thread::Builder::new()
+        .name("jalert-web".into())
+        .spawn(move || {
+            for mut req in srv.incoming_requests() {
+                let (path, query) = split_url(req.url());
+                let resp = route(&path, &query, &mut req, &state);
+                let _ = req.respond(resp);
+            }
+        })
+        .expect("spawn web thread");
+
+    eprintln!("[web] listening on http://localhost:{port}/  (表示=/  受信箱=/inbox)");
+    let child = if cloudflared { start_cloudflared(cloudflared_bin, port) } else { None };
+
+    Ok(WebHandle { server, join: Some(join), cloudflared: child, port, cloudflared_on: cloudflared })
 }
 
 fn route(
@@ -148,7 +165,7 @@ fn sev_num(s: Severity) -> u8 {
 
 // ---- cloudflared ----
 
-fn start_cloudflared(bin: &str, port: u16) {
+fn start_cloudflared(bin: &str, port: u16) -> Option<Child> {
     use std::process::{Command, Stdio};
     let child = Command::new(bin)
         .args(["tunnel", "--no-autoupdate", "--url", &format!("http://localhost:{port}")])
@@ -158,22 +175,20 @@ fn start_cloudflared(bin: &str, port: u16) {
     let mut child = match child {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[cloudflared] could not start '{}': {}", bin, e);
-            eprintln!("[cloudflared] install: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/");
-            return;
+            eprintln!("[cloudflared] could not start '{}': {} (install it and retry)", bin, e);
+            eprintln!("[cloudflared] https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/");
+            return None;
         }
     };
     eprintln!("[cloudflared] starting quick tunnel for http://localhost:{port} …");
-    for stream in [child.stdout.take().map(scan), child.stderr.take().map(scan)]
-        .into_iter()
-        .flatten()
-    {
-        drop(stream); // threads detached inside scan()
+    // Drain stdout/stderr in background, surfacing the public URL.
+    if let Some(o) = child.stdout.take() {
+        scan(o);
     }
-    // Keep the child alive for the process lifetime.
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
+    if let Some(e) = child.stderr.take() {
+        scan(e);
+    }
+    Some(child)
 }
 
 fn scan<R: Read + Send + 'static>(r: R) -> std::thread::JoinHandle<()> {

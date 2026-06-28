@@ -9,7 +9,6 @@
 
 use jalert_receiver::source::SourceConfig;
 use jalert_receiver::state::AppState;
-use jalert_receiver::web::WebConfig;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -124,13 +123,6 @@ fn setup() -> (Config, Arc<Mutex<AppState>>, SourceConfig) {
     };
     let state = Arc::new(Mutex::new(AppState::new(source)));
 
-    if cfg.web_enabled {
-        jalert_receiver::web::spawn(
-            WebConfig { port: cfg.web_port, cloudflared: cfg.cloudflared, cloudflared_bin: cfg.cloudflared_bin.clone() },
-            state.clone(),
-        );
-    }
-
     let src_cfg = SourceConfig {
         host: cfg.source_host.clone(),
         port: cfg.source_port,
@@ -149,12 +141,12 @@ fn main() -> eframe::Result<()> {
     // Try OpenGL (glow) first; if context creation fails (common on VMs / RDP
     // without GPU drivers), retry with wgpu which can use DX12/Vulkan or the
     // software WARP adapter.
-    let glow = run_with(eframe::Renderer::Glow, &state, &src_cfg, cfg.fullscreen);
+    let glow = run_with(eframe::Renderer::Glow, &state, &src_cfg, &cfg);
     let result = match glow {
         Ok(()) => Ok(()),
         Err(e) => {
             log(&format!("glow backend failed: {e}; retrying with wgpu…"));
-            run_with(eframe::Renderer::Wgpu, &state, &src_cfg, cfg.fullscreen)
+            run_with(eframe::Renderer::Wgpu, &state, &src_cfg, &cfg)
         }
     };
     match &result {
@@ -169,7 +161,7 @@ fn run_with(
     renderer: eframe::Renderer,
     state: &Arc<Mutex<AppState>>,
     src_cfg: &SourceConfig,
-    fullscreen: bool,
+    cfg: &Config,
 ) -> eframe::Result<()> {
     log(&format!("starting eframe with {renderer:?} renderer"));
     // On Windows, hint wgpu toward the built-in WARP software adapter so it can
@@ -183,18 +175,25 @@ fn run_with(
             .with_title("J-ALERT 受信表示")
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([720.0, 480.0])
-            .with_fullscreen(fullscreen),
+            .with_fullscreen(cfg.fullscreen),
         renderer,
         ..Default::default()
     };
     let state = state.clone();
     let src_cfg = src_cfg.clone();
+    let fullscreen = cfg.fullscreen;
+    let web = ui::WebInit {
+        enabled: cfg.web_enabled,
+        port: cfg.web_port,
+        cloudflared: cfg.cloudflared,
+        cloudflared_bin: cfg.cloudflared_bin.clone(),
+    };
     eframe::run_native(
         "jalert-receiver",
         options,
         Box::new(move |cc| {
             log("window created; building app & fonts…");
-            Ok(Box::new(ui::App::new(cc, state, src_cfg, fullscreen)))
+            Ok(Box::new(ui::App::new(cc, state, src_cfg, fullscreen, web)))
         }),
     )
 }
@@ -203,9 +202,17 @@ fn run_with(
 #[cfg(not(feature = "gui"))]
 fn main() {
     init_diagnostics();
-    let (_cfg, state, src_cfg) = setup();
-    jalert_receiver::source::spawn(src_cfg, state, Arc::new(|| {}));
-    eprintln!("[headless] running web server only; Ctrl+C to quit.");
+    let (cfg, state, src_cfg) = setup();
+    jalert_receiver::source::spawn(src_cfg, state.clone(), Arc::new(|| {}));
+    let _web = if cfg.web_enabled || cfg.cloudflared {
+        match jalert_receiver::web::start(state, cfg.web_port, cfg.cloudflared, &cfg.cloudflared_bin) {
+            Ok(h) => Some(h),
+            Err(e) => { eprintln!("[web] {e}"); None }
+        }
+    } else {
+        eprintln!("[headless] no --web/--cloudflared; nothing to serve. Ctrl+C to quit.");
+        None
+    };
     loop {
         std::thread::sleep(std::time::Duration::from_secs(3600));
     }
