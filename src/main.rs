@@ -2,12 +2,49 @@
 // and shows a kiosk-style display (待機 ↔ 全画面アラート) plus a mailbox-style
 // management view. An optional embedded web server + cloudflared exposes the
 // mailbox remotely.
-#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+//
+// NOTE: the console is intentionally kept (no `windows_subsystem = "windows"`)
+// so startup failures are visible. We also log to `jalert-receiver.log` next to
+// the executable.
 
 use jalert_receiver::source::SourceConfig;
 use jalert_receiver::state::AppState;
 use jalert_receiver::web::WebConfig;
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+/// Path of the log file, placed next to the executable (fallback: cwd).
+fn log_path() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("jalert-receiver.log")))
+        .unwrap_or_else(|| PathBuf::from("jalert-receiver.log"))
+}
+
+/// Append one line to stderr and the log file.
+pub fn log(msg: &str) {
+    let line = format!("{} {}\n", chrono::Local::now().format("%H:%M:%S%.3f"), msg);
+    eprint!("{line}");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_path()) {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+fn init_diagnostics() {
+    std::env::set_var("RUST_BACKTRACE", "1");
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log(&format!("PANIC: {info}"));
+        default(info);
+    }));
+    log(&format!(
+        "=== jalert-receiver v{} start (os={}, arch={}) ===",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
+}
 
 #[cfg(feature = "gui")]
 mod ui;
@@ -105,26 +142,61 @@ fn setup() -> (Config, Arc<Mutex<AppState>>, SourceConfig) {
 
 #[cfg(feature = "gui")]
 fn main() -> eframe::Result<()> {
+    init_diagnostics();
     let (cfg, state, src_cfg) = setup();
+    log("config parsed; creating window…");
+
+    // Try OpenGL (glow) first; if context creation fails (common on VMs / RDP
+    // without GPU drivers), retry with wgpu which can use DX12/Vulkan or the
+    // software WARP adapter.
+    let glow = run_with(eframe::Renderer::Glow, &state, &src_cfg, cfg.fullscreen);
+    let result = match glow {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            log(&format!("glow backend failed: {e}; retrying with wgpu…"));
+            run_with(eframe::Renderer::Wgpu, &state, &src_cfg, cfg.fullscreen)
+        }
+    };
+    match &result {
+        Ok(()) => log("eframe exited normally"),
+        Err(e) => log(&format!("eframe ERROR (both backends): {e}")),
+    }
+    result
+}
+
+#[cfg(feature = "gui")]
+fn run_with(
+    renderer: eframe::Renderer,
+    state: &Arc<Mutex<AppState>>,
+    src_cfg: &SourceConfig,
+    fullscreen: bool,
+) -> eframe::Result<()> {
+    log(&format!("starting eframe with {renderer:?} renderer"));
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("J-ALERT 受信表示")
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([720.0, 480.0])
-            .with_fullscreen(cfg.fullscreen),
+            .with_fullscreen(fullscreen),
+        renderer,
         ..Default::default()
     };
-    let fullscreen = cfg.fullscreen;
+    let state = state.clone();
+    let src_cfg = src_cfg.clone();
     eframe::run_native(
         "jalert-receiver",
         options,
-        Box::new(move |cc| Ok(Box::new(ui::App::new(cc, state, src_cfg, fullscreen)))),
+        Box::new(move |cc| {
+            log("window created; building app & fonts…");
+            Ok(Box::new(ui::App::new(cc, state, src_cfg, fullscreen)))
+        }),
     )
 }
 
 // Headless build (`--no-default-features`): web server only, no window.
 #[cfg(not(feature = "gui"))]
 fn main() {
+    init_diagnostics();
     let (_cfg, state, src_cfg) = setup();
     jalert_receiver::source::spawn(src_cfg, state, Arc::new(|| {}));
     eprintln!("[headless] running web server only; Ctrl+C to quit.");
