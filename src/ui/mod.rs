@@ -6,7 +6,7 @@ mod inbox;
 use chrono::{DateTime, Local, TimeZone};
 use egui::Color32;
 use jalert_receiver::model::Severity;
-use jalert_receiver::source::SourceConfig;
+use jalert_receiver::source::{SourceConfig, SourceCtl};
 use jalert_receiver::state::AppState;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -24,13 +24,24 @@ pub enum ThemePref {
     Dark,
 }
 
+#[derive(PartialEq, Clone, Copy)]
+pub enum StandbyStyle {
+    Simple,    // clock + 異常なし (default)
+    Jars2000,  // J-ALERT logo + categories + earth backdrop
+}
+
 pub struct App {
     pub state: Arc<Mutex<AppState>>,
+    pub source: Arc<SourceCtl>,
     pub view: View,
     pub theme: ThemePref,
     pub fullscreen: bool,
     pub selected: Option<u64>,
     pub show_xml: bool,
+    pub show_settings: bool,
+    pub cfg_host: String,
+    pub cfg_port: String,
+    pub standby_style: StandbyStyle,
 }
 
 impl App {
@@ -45,15 +56,22 @@ impl App {
         // Wake the UI whenever the feed changes.
         let ctx = cc.egui_ctx.clone();
         let on_change: jalert_receiver::source::OnChange = Arc::new(move || ctx.request_repaint());
-        jalert_receiver::source::spawn(src_cfg, state.clone(), on_change);
+        let host = src_cfg.host.clone();
+        let port = src_cfg.port;
+        let source = jalert_receiver::source::spawn(src_cfg, state.clone(), on_change);
 
         App {
             state,
+            source,
             view: View::Display,
             theme: ThemePref::System,
             fullscreen,
             selected: None,
             show_xml: false,
+            show_settings: false,
+            cfg_host: host,
+            cfg_port: port.to_string(),
+            standby_style: StandbyStyle::Simple,
         }
     }
 
@@ -81,6 +99,7 @@ impl eframe::App for App {
         if !chromeless {
             self.top_bar(ctx);
         }
+        self.settings_window(ctx);
 
         match self.view {
             View::Display => self.show_display(ctx),
@@ -124,6 +143,14 @@ impl App {
                     if ui.button(fs).clicked() {
                         self.toggle_fullscreen(ctx);
                     }
+                    if ui.button("⚙ 設定").clicked() {
+                        if !self.show_settings {
+                            let (h, p) = self.source.endpoint();
+                            self.cfg_host = h;
+                            self.cfg_port = p.to_string();
+                        }
+                        self.show_settings = !self.show_settings;
+                    }
                     if self.view == View::Inbox {
                         egui::ComboBox::from_id_salt("theme")
                             .selected_text(match self.theme {
@@ -143,6 +170,77 @@ impl App {
                 });
             });
         });
+    }
+}
+
+impl App {
+    fn settings_window(&mut self, ctx: &egui::Context) {
+        if !self.show_settings {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new("設定")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.set_min_width(320.0);
+                let (connected, source) = {
+                    let st = self.state.lock().unwrap();
+                    (st.receiver.connected, st.receiver.source.clone())
+                };
+                ui.label(egui::RichText::new("JSONL 受信元 (SDR# プラグイン)").strong());
+                ui.add_space(6.0);
+
+                if self.source.is_replay() {
+                    ui.label(egui::RichText::new("再生(replay)モードのため変更できません").weak());
+                } else {
+                    egui::Grid::new("settings_grid").num_columns(2).spacing([8.0, 8.0]).show(ui, |ui| {
+                        ui.label("ホスト / IP");
+                        ui.add(egui::TextEdit::singleline(&mut self.cfg_host).desired_width(180.0).hint_text("127.0.0.1"));
+                        ui.end_row();
+                        ui.label("ポート");
+                        ui.add(egui::TextEdit::singleline(&mut self.cfg_port).desired_width(90.0).hint_text("7355"));
+                        ui.end_row();
+                    });
+                    ui.add_space(8.0);
+                    let port_ok = self.cfg_port.trim().parse::<u16>().is_ok();
+                    let host_ok = !self.cfg_host.trim().is_empty();
+                    ui.horizontal(|ui| {
+                        if ui.add_enabled(port_ok && host_ok, egui::Button::new("適用して再接続")).clicked() {
+                            if let Ok(p) = self.cfg_port.trim().parse::<u16>() {
+                                self.source.set_endpoint(self.cfg_host.trim().to_string(), p);
+                            }
+                        }
+                        if !port_ok {
+                            ui.colored_label(Color32::from_rgb(0xe6, 0x00, 0x12), "ポートが不正");
+                        }
+                    });
+                }
+
+                ui.separator();
+                ui.label(egui::RichText::new("待機画面スタイル").strong());
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.standby_style, StandbyStyle::Simple, "シンプル");
+                    ui.selectable_value(&mut self.standby_style, StandbyStyle::Jars2000, "JARS2000風");
+                });
+
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let (dot, label) = if connected {
+                        (Color32::from_rgb(0x27, 0xd0, 0x7a), "接続中")
+                    } else {
+                        (Color32::from_rgb(0xe6, 0x00, 0x12), "未接続")
+                    };
+                    ui.colored_label(dot, "●");
+                    ui.label(format!("{label}  ({source})"));
+                });
+            });
+        if !open {
+            self.show_settings = false;
+        }
     }
 }
 

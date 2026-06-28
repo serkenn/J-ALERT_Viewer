@@ -1,7 +1,7 @@
 //! Kiosk display: a calm standby screen, or a full-screen colour-coded alert for
 //! 警報 / 特別警報 (注意報 appear only as a subdued banner).
 
-use super::{hms, report_fmt, sev_color, sev_ink, App};
+use super::{hms, report_fmt, sev_color, sev_ink, App, StandbyStyle};
 use chrono::Local;
 use egui::{Align, Color32, FontId, Layout, RichText};
 use jalert_receiver::model::Severity;
@@ -55,6 +55,14 @@ impl App {
     }
 
     fn draw_standby(&self, ctx: &egui::Context, advisories: &[String]) {
+        match self.standby_style {
+            StandbyStyle::Simple => self.draw_standby_simple(ctx, advisories),
+            StandbyStyle::Jars2000 => self.draw_standby_jars(ctx, advisories),
+        }
+    }
+
+    /// Calm clock screen (default).
+    fn draw_standby_simple(&self, ctx: &egui::Context, advisories: &[String]) {
         let bg = Color32::from_rgb(0x0a, 0x10, 0x20);
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(bg))
@@ -70,24 +78,85 @@ impl App {
                     ui.add_space(h * 0.04);
                     ui.label(RichText::new("● 異常なし").size(h * 0.03).color(Color32::from_rgb(0x27, 0xd0, 0x7a)));
                 });
+                advisory_banner(ui, ui.max_rect(), advisories);
+            });
+    }
 
-                if !advisories.is_empty() {
-                    let rect = ui.max_rect();
-                    let bar_h = (h * 0.08).max(40.0);
-                    let bar = egui::Rect::from_min_max(
-                        egui::pos2(rect.left(), rect.bottom() - bar_h),
-                        rect.max,
-                    );
-                    ui.painter().rect_filled(bar, 0.0, sev_color(Severity::Advisory));
-                    let text = format!("注意報　{}", advisories.join("　／　"));
-                    ui.painter().text(
-                        egui::pos2(bar.left() + 24.0, bar.center().y),
+    /// J-ALERT (jars2000) homage: logo + categories + earth backdrop.
+    fn draw_standby_jars(&self, ctx: &egui::Context, advisories: &[String]) {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().fill(Color32::BLACK))
+            .show(ctx, |ui| {
+                let rect = ui.max_rect();
+                paint_space_backdrop(ui, rect, ctx.input(|i| i.time));
+                let h = rect.height();
+                let w = rect.width();
+                let p = ui.painter();
+
+                // --- J-ALERT wordmark ---
+                let cx = rect.center().x;
+                let logo_y = rect.top() + h * 0.16;
+                p.text(
+                    egui::pos2(cx, logo_y),
+                    egui::Align2::CENTER_CENTER,
+                    "J-ALERT",
+                    FontId::proportional(h * 0.13),
+                    Color32::from_rgb(0xff, 0x2a, 0x1f),
+                );
+                // subtle glow line under the wordmark
+                let lw = w * 0.34;
+                p.line_segment(
+                    [egui::pos2(cx - lw, logo_y + h * 0.085), egui::pos2(cx + lw, logo_y + h * 0.085)],
+                    egui::Stroke::new(2.0, Color32::from_rgb(0x8a, 0x12, 0x10)),
+                );
+
+                // --- category list (国民保護 / 地震 / 津波 / 火山) ---
+                let cats = ["国民保護に関する情報", "地震情報", "津波情報", "火山情報"];
+                let cat_size = (h * 0.05).min(w * 0.04);
+                let left = rect.left() + w * 0.12;
+                let mut y = rect.top() + h * 0.36;
+                let step = cat_size * 1.9;
+                for c in cats {
+                    let sq = cat_size * 0.62;
+                    let r = egui::Rect::from_min_size(egui::pos2(left, y - sq / 2.0), egui::vec2(sq, sq));
+                    p.rect_filled(r, 1.0, Color32::from_rgb(0xe9, 0xee, 0xf6));
+                    p.text(
+                        egui::pos2(left + sq + cat_size * 0.55, y),
                         Align2_LEFT_CENTER(),
-                        text,
-                        FontId::proportional((bar_h * 0.4).min(26.0)),
-                        Color32::from_rgb(0x1a, 0x1a, 0x1c),
+                        c,
+                        FontId::proportional(cat_size),
+                        Color32::from_rgb(0xe9, 0xee, 0xf6),
                     );
+                    y += step;
                 }
+
+                // --- clock / status (top-right) ---
+                let now = Local::now();
+                p.text(
+                    egui::pos2(rect.right() - w * 0.04, rect.top() + h * 0.06),
+                    egui::Align2::RIGHT_CENTER,
+                    now.format("%H:%M:%S").to_string(),
+                    FontId::proportional(h * 0.06),
+                    Color32::from_rgb(0xdf, 0xe7, 0xff),
+                );
+                p.text(
+                    egui::pos2(rect.right() - w * 0.04, rect.top() + h * 0.115),
+                    egui::Align2::RIGHT_CENTER,
+                    now.format("%Y年%-m月%-d日").to_string(),
+                    FontId::proportional(h * 0.03),
+                    Color32::from_rgb(0x9d, 0xab, 0xcf),
+                );
+
+                // --- standby / health line (bottom-left) ---
+                p.text(
+                    egui::pos2(rect.left() + w * 0.04, rect.bottom() - h * 0.06),
+                    Align2_LEFT_CENTER(),
+                    "● 受信待機中 / 異常なし",
+                    FontId::proportional(h * 0.028),
+                    Color32::from_rgb(0x35, 0xd9, 0x86),
+                );
+
+                advisory_banner(ui, rect, advisories);
             });
     }
 
@@ -181,6 +250,61 @@ impl App {
                 let _ = sev_ink; // referenced for parity with web tags
             });
     }
+}
+
+/// Yellow 注意報 banner pinned to the bottom of the standby screen.
+fn advisory_banner(ui: &egui::Ui, rect: egui::Rect, advisories: &[String]) {
+    if advisories.is_empty() {
+        return;
+    }
+    let bar_h = (rect.height() * 0.08).max(40.0);
+    let bar = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - bar_h), rect.max);
+    let p = ui.painter();
+    p.rect_filled(bar, 0.0, sev_color(Severity::Advisory));
+    p.text(
+        egui::pos2(bar.left() + 24.0, bar.center().y),
+        Align2_LEFT_CENTER(),
+        format!("注意報　{}", advisories.join("　／　")),
+        FontId::proportional((bar_h * 0.4).min(26.0)),
+        Color32::from_rgb(0x1a, 0x1a, 0x1c),
+    );
+}
+
+/// A simple starfield with an earth limb glowing along the bottom — an homage to
+/// the classic J-ALERT (jars2000) standby screen, drawn procedurally (no assets).
+fn paint_space_backdrop(ui: &egui::Ui, rect: egui::Rect, time: f64) {
+    let p = ui.painter();
+    let w = rect.width();
+    let h = rect.height();
+
+    // deterministic star positions (seeded LCG) so they don't jump each frame
+    let mut seed: u64 = 0x1234_5678_9abc_def1;
+    let mut next = || {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        ((seed >> 33) as f32) / (i32::MAX as f32)
+    };
+    for i in 0..130 {
+        let sx = rect.left() + next() * w;
+        let sy = rect.top() + next() * h * 0.72;
+        let base = 0.35 + next() * 0.65;
+        let tw = 0.75 + 0.25 * ((time * 1.3 + i as f64).sin() as f32);
+        let a = (base * tw * 200.0) as u8;
+        let r = 0.5 + next() * 1.3;
+        p.circle_filled(egui::pos2(sx, sy), r, Color32::from_white_alpha(a));
+    }
+
+    // earth limb: a big circle whose top arc rises from the bottom edge
+    let cx = rect.center().x;
+    let radius = w * 0.62;
+    let center = egui::pos2(cx, rect.bottom() + radius * 0.62);
+    p.circle_filled(center, radius, Color32::from_rgb(0x07, 0x1a, 0x33));
+    // landmass / lighter ocean hints
+    p.circle_filled(center + egui::vec2(-w * 0.12, -radius * 0.18), radius * 0.34, Color32::from_rgb(0x0e, 0x33, 0x55));
+    p.circle_filled(center + egui::vec2(w * 0.16, -radius * 0.12), radius * 0.22, Color32::from_rgb(0x10, 0x3a, 0x42));
+    // atmosphere glow rim
+    p.circle_stroke(center, radius + 1.0, egui::Stroke::new(3.0, Color32::from_rgb(0x36, 0x8f, 0xe0)));
+    p.circle_stroke(center, radius + 6.0, egui::Stroke::new(8.0, Color32::from_rgba_unmultiplied(0x36, 0x8f, 0xe0, 40)));
+    let _ = h;
 }
 
 fn area_of(area_name: &str, head_title: &str) -> String {

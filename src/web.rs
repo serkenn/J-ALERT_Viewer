@@ -2,12 +2,13 @@
 //! cloudflared integration. Serves the mailbox UI and a small JSON/XML API. The
 //! page polls `/api/state`; this keeps the server dependency-light (tiny_http).
 
-use crate::model::{InboxItem, Severity};
+use crate::model::{AlertChannel, InboxItem, Severity};
 use crate::state::AppState;
 use std::io::{BufRead, BufReader, Read};
 use std::sync::{Arc, Mutex};
 
 const INBOX_HTML: &str = include_str!("../wwwroot/inbox.html");
+const INDEX_HTML: &str = include_str!("../wwwroot/index.html");
 
 #[derive(Clone)]
 pub struct WebConfig {
@@ -52,7 +53,8 @@ fn route(
     state: &Arc<Mutex<AppState>>,
 ) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
     match path {
-        "/" | "/inbox" => html(INBOX_HTML),
+        "/" => html(INDEX_HTML),       // public J-ALERT display
+        "/inbox" => html(INBOX_HTML),  // management mailbox
         "/healthz" => text("ok"),
         "/api/state" => json(state_json(&state.lock().unwrap())),
         "/api/xml" => {
@@ -81,8 +83,14 @@ fn route(
 fn state_json(st: &AppState) -> serde_json::Value {
     let r = &st.receiver;
     let inbox: Vec<serde_json::Value> = st.inbox().map(item_json).collect();
+    let alerts: Vec<serde_json::Value> = st.alerts().iter().map(|c| channel_json(c)).collect();
+    let advisories: Vec<serde_json::Value> = st.advisories().iter().map(|c| channel_json(c)).collect();
     serde_json::json!({
         "mode": st.mode(),
+        "topSeverity": sev_num(st.top_severity()),
+        "primary": st.primary().map(channel_json),
+        "alerts": alerts,
+        "advisories": advisories,
         "unread": st.unread(),
         "inbox": inbox,
         "receiver": {
@@ -91,6 +99,23 @@ fn state_json(st: &AppState) -> serde_json::Value {
             "totalLines": r.total_lines,
             "lastLineMs": r.last_line_ms,
         },
+    })
+}
+
+fn channel_json(c: &AlertChannel) -> serde_json::Value {
+    serde_json::json!({
+        "severity": sev_num(c.severity),
+        "severityLabel": c.severity.label(),
+        "areaName": if c.area_name.is_empty() { &c.head_title } else { &c.area_name },
+        "headTitle": c.head_title,
+        "infoType": c.info_type,
+        "kinds": c.kinds.iter().map(|k| &k.name).collect::<Vec<_>>(),
+        "headline": c.headline,
+        "reportTime": c.report_time,
+        "packetTime": c.packet_time,
+        "rxTimeMs": c.rx_time_ms,
+        "areas": c.areas,
+        "key": c.head_title,
     })
 }
 
