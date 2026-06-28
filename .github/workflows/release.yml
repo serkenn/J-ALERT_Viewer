@@ -55,10 +55,38 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $name = "jalert-receiver-$env:GITHUB_REF_NAME-${{ matrix.rid }}"
           New-Item -ItemType Directory -Force "stage/$name" | Out-Null
           Copy-Item "target/release/jalert-receiver${{ matrix.ext }}" "stage/$name/"
           Copy-Item README.md,LICENSE "stage/$name/"
+
+          # Bundle Mesa3D software OpenGL so the GUI runs on VMs / RDP with no GPU
+          # (e.g. Proxmox). Placed next to the .exe, this opengl32.dll is loaded
+          # in preference to the system one and provides software OpenGL 4.x.
+          $rel = Invoke-RestMethod -Headers @{ 'User-Agent' = 'gh-actions' } `
+            https://api.github.com/repos/pal1000/mesa-dist-win/releases/latest
+          $asset = $rel.assets | Where-Object { $_.name -like '*-release-msvc.7z' } | Select-Object -First 1
+          Write-Host "Mesa: $($asset.name)"
+          Invoke-WebRequest $asset.browser_download_url -OutFile mesa.7z -UseBasicParsing
+          7z x mesa.7z -omesa -y | Out-Null
+          foreach ($dll in 'opengl32.dll','libgallium_wgl.dll','libglapi.dll','dxil.dll') {
+            $f = Get-ChildItem mesa -Recurse -Filter $dll |
+                 Where-Object { $_.FullName -match '\\x64\\' } | Select-Object -First 1
+            if ($f) { Copy-Item $f.FullName "stage/$name/"; Write-Host "bundled $dll" }
+          }
+          if (-not (Test-Path "stage/$name/opengl32.dll")) { throw "Mesa opengl32.dll not bundled" }
+
+          @"
+          このフォルダ内の jalert-receiver.exe をダブルクリックで起動します。
+
+          同梱の opengl32.dll は GPU の無い環境(VM/RDP 等)向けの Mesa3D
+          ソフトウェア OpenGL です。GPU/ドライバがある PC では削除しても
+          構いません(その場合 GPU 描画になります)。
+
+          起動しない場合は同フォルダにできる jalert-receiver.log を確認してください。
+          "@ | Out-File -Encoding utf8 "stage/$name/はじめにお読みください.txt"
+
           Compress-Archive -Path "stage/$name" -DestinationPath "$name.zip"
 
       - uses: actions/upload-artifact@v4

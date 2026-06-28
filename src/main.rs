@@ -172,6 +172,12 @@ fn run_with(
     fullscreen: bool,
 ) -> eframe::Result<()> {
     log(&format!("starting eframe with {renderer:?} renderer"));
+    // On Windows, hint wgpu toward the built-in WARP software adapter so it can
+    // start on VMs/RDP that have no GPU (Vulkan/DX12) at all.
+    #[cfg(windows)]
+    if matches!(renderer, eframe::Renderer::Wgpu) && std::env::var_os("WGPU_ADAPTER_NAME").is_none() {
+        std::env::set_var("WGPU_ADAPTER_NAME", "Microsoft Basic Render Driver");
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("J-ALERT 受信表示")

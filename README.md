@@ -108,6 +108,15 @@ sudo apt-get install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev \
   libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev
 ```
 
+## GPUの無い環境（VM / RDP）での表示
+
+GPU/3Dドライバの無い環境（Proxmox 等の VM、RDP）では OpenGL も Vulkan/DX12 も
+利用できず GUI が起動しないことがあります。Windows 版 zip には **Mesa3D の
+ソフトウェア OpenGL（`opengl32.dll`）を同梱**しており、exe と同じフォルダに置く
+ことでソフトウェア描画で起動します（GPU のある PC では削除すれば GPU 描画に
+なります）。起動順序は **glow(OpenGL) → wgpu(DX12/Vulkan/WARP)** で自動選択し、
+失敗内容は exe 隣の `jalert-receiver.log` に記録されます。
+
 ## 配布 / Release
 タグ（`v*`）を push すると GitHub Actions が Linux / Windows のネイティブ実行
 ファイルをビルドし、Release に成果物を添付します
