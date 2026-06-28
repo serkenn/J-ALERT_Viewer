@@ -1,0 +1,4 @@
+# Statically link the MSVC C runtime on Windows so the .exe does not depend on
+# VCRUNTIME140.dll (the VC++ redistributable). Makes the binary standalone.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
