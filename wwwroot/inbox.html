@@ -234,12 +234,13 @@ $("#themeBtn").onclick=()=>{
 
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
 
-function connect(){
-  const es=new EventSource("/events");
-  es.onmessage=e=>{try{render(JSON.parse(e.data));}catch(_){}};
-  es.onerror=()=>{es.close();$("#dot").className="dot off";setTimeout(connect,2000);};
+// The native app serves a poll-based JSON API (no SSE), so refresh on a timer.
+async function poll(){
+  try{ render(await (await fetch("/api/state",{cache:"no-store"})).json()); }
+  catch(_){ $("#dot").className="dot off"; }
 }
-connect();
+poll();
+setInterval(poll,1500);
 </script>
 </body>
 </html>

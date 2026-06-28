@@ -1,8 +1,5 @@
-# Build output
-bin/
-obj/
-publish/
-*.user
+# Rust build output
+/target
 
 # OS
 .DS_Store
