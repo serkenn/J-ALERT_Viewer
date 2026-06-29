@@ -115,6 +115,7 @@ pub struct App {
     pub selected: Option<u64>,
     pub show_xml: bool,
     pub status_query: String,
+    pub inbox_cat: Option<Category>,
     // settings dialog
     pub show_settings: bool,
     pub cfg_host: String,
@@ -178,6 +179,7 @@ impl App {
             selected: None,
             show_xml: false,
             status_query: String::new(),
+            inbox_cat: None,
             show_settings: false,
             cfg_host: host,
             cfg_port: port.to_string(),

@@ -166,19 +166,24 @@ impl AppState {
     fn record_history(&mut self, ch: &AlertChannel) {
         let kinds: Vec<String> = ch.kinds.iter().map(|k| k.name.clone()).collect();
 
-        // Collapse retransmits: the same telegram arrives every few seconds and
-        // on both channels.
-        if let Some(prev) = self.history.iter_mut().rev().find(|h| h.head_title == ch.head_title && h.category == ch.category) {
-            if prev.severity == ch.severity
-                && prev.info_type == ch.info_type
-                && prev.headline == ch.headline
-                && prev.kinds == kinds
-            {
-                prev.rx_time_ms = ch.rx_time_ms;
-                prev.packet_time = ch.packet_time.clone();
-                prev.channel = ch.channel;
-                return;
-            }
+        // Collapse retransmits: the same telegram arrives every few seconds, on
+        // both channels, and (for e.g. 地震情報, which all share the head title
+        // "震源・震度情報") interleaved with other reports — so match on the full
+        // content identity rather than just the head title.
+        let sev = ch.effective_severity();
+        if let Some(prev) = self.history.iter_mut().rev().find(|h| {
+            h.category == ch.category
+                && h.head_title == ch.head_title
+                && h.area_name == ch.area_name
+                && h.severity == sev
+                && h.info_type == ch.info_type
+                && h.headline == ch.headline
+                && h.kinds == kinds
+        }) {
+            prev.rx_time_ms = ch.rx_time_ms;
+            prev.packet_time = ch.packet_time.clone();
+            prev.channel = ch.channel;
+            return;
         }
 
         let item = InboxItem {

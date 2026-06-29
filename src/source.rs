@@ -119,6 +119,19 @@ fn read_lines(stream: TcpStream, state: &Arc<Mutex<AppState>>, on_change: &OnCha
 
 fn replay(path: &str, interval_ms: u64, state: &Arc<Mutex<AppState>>, on_change: &OnChange) {
     set_connected(state, true, on_change);
+    let p = std::path::Path::new(path);
+    if p.is_dir() {
+        replay_xml_dir(p, interval_ms, state, on_change);
+    } else if p.extension().map_or(false, |e| e.eq_ignore_ascii_case("xml")) {
+        replay_xml_file(p, state, on_change);
+    } else {
+        replay_jsonl(path, interval_ms, state, on_change);
+    }
+    eprintln!("[replay] done");
+}
+
+/// Replay a JSONL file (one decoded record per line).
+fn replay_jsonl(path: &str, interval_ms: u64, state: &Arc<Mutex<AppState>>, on_change: &OnChange) {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) => {
@@ -133,7 +146,42 @@ fn replay(path: &str, interval_ms: u64, state: &Arc<Mutex<AppState>>, on_change:
         ingest(line, state, on_change);
         std::thread::sleep(Duration::from_millis(interval_ms));
     }
-    eprintln!("[replay] done");
+}
+
+/// Replay a directory of raw JMA `.xml` telegrams (sorted by name = chronological,
+/// e.g. the saved archive). Each file is one telegram.
+fn replay_xml_dir(dir: &std::path::Path, interval_ms: u64, state: &Arc<Mutex<AppState>>, on_change: &OnChange) {
+    let mut files: Vec<std::path::PathBuf> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().map_or(false, |e| e.eq_ignore_ascii_case("xml")))
+            .collect(),
+        Err(e) => {
+            eprintln!("[replay] {}: {e}", dir.display());
+            return;
+        }
+    };
+    files.sort();
+    eprintln!("[replay] {} XML telegrams from {}", files.len(), dir.display());
+    for f in files {
+        replay_xml_file(&f, state, on_change);
+        std::thread::sleep(Duration::from_millis(interval_ms));
+    }
+}
+
+fn replay_xml_file(path: &std::path::Path, state: &Arc<Mutex<AppState>>, on_change: &OnChange) {
+    let xml = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[replay] {}: {e}", path.display());
+            return;
+        }
+    };
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    if let Some(ch) = crate::classify::from_xml(&xml, stem) {
+        state.lock().unwrap().ingest(ch);
+        on_change();
+    }
 }
 
 fn ingest(line: &str, state: &Arc<Mutex<AppState>>, on_change: &OnChange) {

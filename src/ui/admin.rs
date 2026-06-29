@@ -438,20 +438,25 @@ impl App {
     // ---- 緊急情報一覧 ----
     fn show_alerts(&mut self, ctx: &egui::Context) {
         let q = self.status_query.trim().to_string();
-        let rows: Vec<Row> = {
+        let cat = self.inbox_cat;
+        let (rows, total): (Vec<Row>, usize) = {
             let st = self.state.lock().unwrap();
-            st.inbox()
+            let total = st.inbox().count();
+            let rows = st
+                .inbox()
+                .filter(|it| cat.map_or(true, |c| it.category == c))
                 .filter(|it| {
                     if q.is_empty() {
                         return true;
                     }
                     let hay = format!(
-                        "{} {} {} {} {}",
+                        "{} {} {} {} {} {}",
                         it.category.label(),
                         it.alert_type.code(),
                         it.area_name,
                         it.head_title,
-                        it.kinds.join(" ")
+                        it.kinds.join(" "),
+                        it.headline
                     );
                     hay.contains(&q)
                 })
@@ -467,7 +472,8 @@ impl App {
                     rx_time_ms: it.rx_time_ms,
                     read: it.read,
                 })
-                .collect()
+                .collect();
+            (rows, total)
         };
 
         let mut clicked: Option<u64> = None;
@@ -481,10 +487,30 @@ impl App {
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     ui.label("検索:");
-                    ui.add(egui::TextEdit::singleline(&mut self.status_query).desired_width(180.0).hint_text("地域・種別"));
+                    ui.add(egui::TextEdit::singleline(&mut self.status_query).desired_width(150.0).hint_text("地域・種別・本文"));
                     if ui.button("すべて既読").clicked() {
                         self.state.lock().unwrap().mark_all_read();
                     }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("種別:");
+                    let cur = self.inbox_cat.map_or("すべて", |c| c.label());
+                    egui::ComboBox::from_id_salt("inbox_cat").selected_text(cur).width(180.0).show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.inbox_cat, None, "すべて");
+                        for c in [
+                            Category::CivilProtection,
+                            Category::EmergencyContact,
+                            Category::Eew,
+                            Category::Earthquake,
+                            Category::SeismicIntensity,
+                            Category::Tsunami,
+                            Category::Volcano,
+                            Category::Weather,
+                        ] {
+                            ui.selectable_value(&mut self.inbox_cat, Some(c), c.label());
+                        }
+                    });
+                    ui.weak(format!("{} / {} 件", rows.len(), total));
                 });
                 ui.separator();
                 if rows.is_empty() {
