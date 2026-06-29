@@ -9,77 +9,107 @@
 /// 電文種別コード (`alert_type`) as broadcast on the alert channels.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum AlertType {
-    Wrma, // 気象警報・注意報
-    Ioeq, // 地震情報・震度速報
-    Eprq, // 緊急地震速報
-    Issw, // 津波警報・注意報
-    Jalt, // 試験・訓練・システム通知
+    Jalt, // 国民保護情報 (protect_civilians)
+    Ifda, // 緊急連絡 (fire_department)
+    Eprq, // 緊急地震速報 (emergency_earthquake)
+    Ioeq, // 地震情報・震度速報 (earthquake)
+    Issw, // 津波情報 (tsunami)
+    Volc, // 火山情報 (volcano)
+    Wrma, // 気象情報 (meteorological)
     #[default]
     Unknown,
 }
 
 impl AlertType {
-    /// The 4-char code as it appears in the telegram / logs.
+    /// The 4-char code (`alert_type` symbol, upper-cased) as it appears in the
+    /// telegram / logs.
     pub fn code(self) -> &'static str {
         match self {
-            AlertType::Wrma => "WRMA",
-            AlertType::Ioeq => "IOEQ",
-            AlertType::Eprq => "EPRQ",
-            AlertType::Issw => "ISSW",
             AlertType::Jalt => "JALT",
+            AlertType::Ifda => "IFDA",
+            AlertType::Eprq => "EPRQ",
+            AlertType::Ioeq => "IOEQ",
+            AlertType::Issw => "ISSW",
+            AlertType::Volc => "VOLC",
+            AlertType::Wrma => "WRMA",
             AlertType::Unknown => "----",
         }
     }
 
     pub fn from_code(s: &str) -> AlertType {
         match s.trim().to_ascii_uppercase().as_str() {
-            "WRMA" | "WRMX" => AlertType::Wrma,
-            "IOEQ" => AlertType::Ioeq,
-            "EPRQ" => AlertType::Eprq,
-            "ISSW" => AlertType::Issw,
             "JALT" => AlertType::Jalt,
+            "IFDA" => AlertType::Ifda,
+            "EPRQ" => AlertType::Eprq,
+            "IOEQ" => AlertType::Ioeq,
+            "ISSW" => AlertType::Issw,
+            "VOLC" => AlertType::Volc,
+            "WRMA" | "WRMX" => AlertType::Wrma,
             _ => AlertType::Unknown,
         }
     }
 }
 
-/// 情報種別 (`alert_sub_type`). Drives the colour, the standby category lamps and
-/// whether a telegram takes over the whole screen.
+/// 情報種別. Mirrors the legacy telegram taxonomy (`alert_type_text` /
+/// `alert_sub_type`). Drives the colour, the standby category lamps, the display
+/// priority and whether a telegram takes over the whole screen.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Category {
-    CivilProtection,  // 国民保護情報 (弾道ミサイル・武力攻撃等)
-    Eew,              // 緊急地震速報
-    Earthquake,       // 地震情報
-    SeismicIntensity, // 震度速報
-    Tsunami,          // 津波警報・注意報
-    Volcano,          // 火山(噴火警報)
-    Weather,          // 気象警報・注意報
-    Test,             // 試験・訓練
+    CivilProtection,  // 国民保護情報 (jalt)
+    EmergencyContact, // 緊急連絡 (ifda)
+    Eew,              // 緊急地震速報 (eprq)
+    Earthquake,       // 地震情報 (ioeq)
+    SeismicIntensity, // 震度速報 (ioeq)
+    Tsunami,          // 津波情報 (issw)
+    Volcano,          // 火山情報 (volc)
+    Weather,          // 気象情報 (wrma)
+    Test,             // 試験放送 (jalt pattern 6 / 配信試験)
     #[default]
     Other, // その他
 }
 
 impl Category {
-    /// 情報種別名 (long form), matching the legacy `alert_sub_type` wording.
+    /// 情報種別名, matching the legacy `alert_type_text`.
     pub fn label(self) -> &'static str {
         match self {
             Category::CivilProtection => "国民保護情報",
+            Category::EmergencyContact => "緊急連絡",
             Category::Eew => "緊急地震速報",
             Category::Earthquake => "地震情報",
             Category::SeismicIntensity => "震度速報",
-            Category::Tsunami => "津波警報・注意報",
+            Category::Tsunami => "津波情報",
             Category::Volcano => "火山情報",
-            Category::Weather => "気象警報・注意報",
-            Category::Test => "試験・訓練",
+            Category::Weather => "気象情報",
+            Category::Test => "試験放送",
             Category::Other => "その他",
+        }
+    }
+
+    /// Display priority, mirroring `Telegram#priority` (higher = more urgent):
+    /// 国民保護 15 / 緊急地震速報 13 / 津波 11 / 火山 9 / 緊急連絡 5 /
+    /// 震度速報 1 / 地震・気象 0.
+    pub fn priority(self) -> u8 {
+        match self {
+            Category::CivilProtection => 15,
+            Category::Eew => 13,
+            Category::Tsunami => 11,
+            Category::Volcano => 9,
+            Category::EmergencyContact => 5,
+            Category::Test => 2,
+            Category::SeismicIntensity => 1,
+            Category::Earthquake | Category::Weather | Category::Other => 0,
         }
     }
 
     /// Map a legacy `alert_sub_type` string to a category.
     pub fn from_sub_type(s: &str) -> Category {
         let s = s.trim();
-        if s.contains("国民保護") || s.contains("弾道ミサイル") || s.contains("武力攻撃") {
+        if s.contains("国民保護") || s.contains("弾道ミサイル") || s.contains("武力攻撃")
+            || s.contains("ゲリラ") || s.contains("航空攻撃") || s.contains("テロ")
+        {
             Category::CivilProtection
+        } else if s.contains("緊急連絡") {
+            Category::EmergencyContact
         } else if s.contains("緊急地震速報") {
             Category::Eew
         } else if s.contains("震度速報") {
@@ -99,20 +129,22 @@ impl Category {
         }
     }
 
-    /// The default category for a bare telegram code, used when no sub-type text
-    /// is available.
+    /// The default category for a bare telegram code.
     pub fn from_alert_type(t: AlertType) -> Category {
         match t {
-            AlertType::Wrma => Category::Weather,
-            AlertType::Ioeq => Category::Earthquake,
+            AlertType::Jalt => Category::CivilProtection,
+            AlertType::Ifda => Category::EmergencyContact,
             AlertType::Eprq => Category::Eew,
+            AlertType::Ioeq => Category::Earthquake,
             AlertType::Issw => Category::Tsunami,
-            AlertType::Jalt => Category::Test,
+            AlertType::Volc => Category::Volcano,
+            AlertType::Wrma => Category::Weather,
             AlertType::Unknown => Category::Other,
         }
     }
 
-    /// The four standby "category lamps" the legacy receiver shows on its idle screen.
+    /// The four standby "category lamps" the legacy receiver shows on its idle
+    /// screen (国民保護 / 地震 / 津波 / 火山).
     pub fn lamp_group(self) -> Option<LampGroup> {
         match self {
             Category::CivilProtection => Some(LampGroup::CivilProtection),
@@ -266,6 +298,7 @@ impl AlertChannel {
         match self.category {
             Category::CivilProtection => Severity::Emergency,
             Category::Eew | Category::Tsunami | Category::Volcano => Severity::Warning,
+            Category::EmergencyContact => Severity::Warning,
             Category::Weather => self.severity,
             Category::Earthquake | Category::SeismicIntensity => Severity::Advisory,
             Category::Test => Severity::Advisory,

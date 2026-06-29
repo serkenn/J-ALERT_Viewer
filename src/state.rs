@@ -110,7 +110,8 @@ fn default_rules() -> Vec<InterfaceRule> {
         row(CivilProtection, AlertType::Jalt, true, true, true, true),
         row(Eew, AlertType::Eprq, true, true, true, true),
         row(Tsunami, AlertType::Issw, true, true, true, true),
-        row(Volcano, AlertType::Issw, true, true, false, true),
+        row(Volcano, AlertType::Volc, true, true, false, true),
+        row(EmergencyContact, AlertType::Ifda, true, true, false, true),
         row(Earthquake, AlertType::Ioeq, true, false, false, false),
         row(SeismicIntensity, AlertType::Ioeq, true, false, false, false),
         row(Weather, AlertType::Wrma, true, false, false, false),
@@ -225,13 +226,15 @@ impl AppState {
         }
     }
 
-    /// Fullscreen-eligible telegrams (警報級以上の表示対象), most severe then most
-    /// recent first.
+    /// Fullscreen-eligible telegrams (警報級以上の表示対象), by legacy display
+    /// priority (国民保護＞緊急地震速報＞津波＞火山…), then severity, then most recent.
     pub fn alerts(&self) -> Vec<&AlertChannel> {
         let mut v: Vec<&AlertChannel> = self.channels.values().filter(|c| c.is_fullscreen()).collect();
         v.sort_by(|a, b| {
-            b.effective_severity()
-                .cmp(&a.effective_severity())
+            b.category
+                .priority()
+                .cmp(&a.category.priority())
+                .then(b.effective_severity().cmp(&a.effective_severity()))
                 .then(b.rx_time_ms.cmp(&a.rx_time_ms))
         });
         v
@@ -293,11 +296,13 @@ impl AppState {
     /// Per-telegram-type received counts, ordered like [`default_rules`].
     pub fn type_counts(&self) -> Vec<(AlertType, u64)> {
         [
-            AlertType::Wrma,
-            AlertType::Ioeq,
-            AlertType::Eprq,
-            AlertType::Issw,
             AlertType::Jalt,
+            AlertType::Ifda,
+            AlertType::Eprq,
+            AlertType::Ioeq,
+            AlertType::Issw,
+            AlertType::Volc,
+            AlertType::Wrma,
             AlertType::Unknown,
         ]
         .into_iter()

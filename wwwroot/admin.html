@@ -155,7 +155,7 @@ function fmtRep(iso){if(!iso)return"—";const d=new Date(iso);if(isNaN(d))retur
   return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;}
 // For weather the severity label (警報/注意報) is meaningful; otherwise show the
 // 情報種別 (category) name.
-function tagText(it){ return it.category==="気象警報・注意報" ? it.severityLabel : (it.category||it.severityLabel); }
+function tagText(it){ return it.category==="気象情報" ? it.severityLabel : (it.category||it.severityLabel); }
 function sevtag(it){
   return `<span class="sevtag" style="background:${SEVCOLOR[it.severity]};color:${SEVINK[it.severity]||"#fff"}">${esc(tagText(it))}</span>`;
 }

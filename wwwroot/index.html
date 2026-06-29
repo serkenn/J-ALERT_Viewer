@@ -143,7 +143,7 @@ function render(s){
   if(alertOn){
     const p=s.primary, sev=SEV[p.severity]||"warning";
     const al=$("#alert"); al.classList.remove("warning","emergency"); al.classList.add(sev);
-    $("#sev").textContent = p.category==="気象警報・注意報" ? (LBL[p.severity]||"警報") : (p.category||LBL[p.severity]||"警報");
+    $("#sev").textContent = p.category==="気象情報" ? (LBL[p.severity]||"警報") : (p.category||LBL[p.severity]||"警報");
     $("#area").textContent=p.areaName||p.headTitle||"";
     let it=p.infoType||"発表"; if((s.alerts||[]).length>1) it+=`　／　他 ${s.alerts.length-1} 件発表中`;
     $("#it").textContent=it;

@@ -461,6 +461,7 @@ pub fn sev_ink(s: Severity) -> Color32 {
 pub fn cat_color(c: Category) -> Color32 {
     match c {
         Category::CivilProtection => Color32::from_rgb(0x9a, 0x0e, 0x8e),
+        Category::EmergencyContact => Color32::from_rgb(0xb5, 0x3a, 0x8e),
         Category::Eew => Color32::from_rgb(0xe6, 0x00, 0x12),
         Category::Tsunami => Color32::from_rgb(0xd5, 0x4f, 0x00),
         Category::Volcano => Color32::from_rgb(0xb0, 0x3a, 0x2e),
