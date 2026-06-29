@@ -1,13 +1,16 @@
 //! Kiosk display: a calm standby screen, or a full-screen colour-coded alert for
-//! 警報 / 特別警報 (注意報 appear only as a subdued banner).
+//! 警報級以上の表示対象 (注意報・情報 appear only as a subdued banner). Three
+//! standby styles: シンプル / パチモン / リアル.
 
-use super::{hms, report_fmt, sev_color, sev_ink, App, StandbyStyle};
+use super::{hms, report_fmt, sev_color, App, Align2_LEFT_CENTER, StandbyStyle};
 use chrono::Local;
 use egui::{Align, Color32, FontId, Layout, RichText};
-use jalert_receiver::model::Severity;
+use jalert_receiver::model::{Category, LampGroup, Severity};
 
 struct AlertView {
     severity: Severity,
+    category: Category,
+    type_code: &'static str,
     area: String,
     info_type: String,
     kinds: Vec<String>,
@@ -19,20 +22,41 @@ struct AlertView {
     others: Vec<String>,
 }
 
+impl AlertView {
+    /// The big heading: weather shows its graded level, other categories show
+    /// the 情報種別 name.
+    fn heading(&self) -> String {
+        if self.category == Category::Weather {
+            self.severity.label().to_string()
+        } else {
+            self.category.label().to_string()
+        }
+    }
+}
+
 impl App {
     pub(crate) fn show_display(&mut self, ctx: &egui::Context) {
         // Snapshot what we need, then release the lock before drawing.
-        let (mode, primary, advisories) = {
+        let (mode, primary, advisories, lamps) = {
             let st = self.state.lock().unwrap();
             let advisories: Vec<String> = st
                 .advisories()
                 .iter()
-                .map(|c| format!("【{}】{}", area_of(&c.area_name, &c.head_title), c.kinds.iter().map(|k| k.name.clone()).collect::<Vec<_>>().join("・")))
+                .map(|c| {
+                    let body = if c.kinds.is_empty() {
+                        c.category.label().to_string()
+                    } else {
+                        c.kinds.iter().map(|k| k.name.clone()).collect::<Vec<_>>().join("・")
+                    };
+                    format!("【{}】{}", c.area_label(), body)
+                })
                 .collect();
             let alerts = st.alerts();
             let primary = alerts.first().map(|p| AlertView {
-                severity: p.severity,
-                area: area_of(&p.area_name, &p.head_title),
+                severity: p.effective_severity(),
+                category: p.category,
+                type_code: p.alert_type.code(),
+                area: p.area_label().to_string(),
                 info_type: p.info_type.clone(),
                 kinds: p.kinds.iter().map(|k| k.name.clone()).collect(),
                 headline: p.headline.clone(),
@@ -41,23 +65,25 @@ impl App {
                 sub_areas: p.areas.iter().filter(|a| **a != p.area_name).cloned().collect(),
                 other_count: alerts.len().saturating_sub(1),
                 others: alerts.iter().skip(1).map(|a| {
-                    format!("{} {}：{}", a.severity.label(), area_of(&a.area_name, &a.head_title),
-                            a.kinds.iter().map(|k| k.name.clone()).collect::<Vec<_>>().join("・"))
+                    let body = a.kinds.iter().map(|k| k.name.clone()).collect::<Vec<_>>().join("・");
+                    let body = if body.is_empty() { a.category.label().to_string() } else { body };
+                    format!("{} {}：{}", a.category.label(), a.area_label(), body)
                 }).collect(),
             });
-            (st.mode(), primary, advisories)
+            (st.mode().to_string(), primary, advisories, st.active_lamps())
         };
 
-        match (mode, primary) {
+        match (mode.as_str(), primary) {
             ("alert", Some(p)) => self.draw_alert(ctx, &p),
-            _ => self.draw_standby(ctx, &advisories),
+            _ => self.draw_standby(ctx, &advisories, &lamps),
         }
     }
 
-    fn draw_standby(&self, ctx: &egui::Context, advisories: &[String]) {
+    fn draw_standby(&self, ctx: &egui::Context, advisories: &[String], lamps: &[LampGroup]) {
         match self.standby_style {
             StandbyStyle::Simple => self.draw_standby_simple(ctx, advisories),
-            StandbyStyle::Jars2000 => self.draw_standby_jars(ctx, advisories),
+            StandbyStyle::Pachimon => self.draw_standby_pachimon(ctx, advisories, lamps),
+            StandbyStyle::Real => self.draw_standby_real(ctx, advisories, lamps),
         }
     }
 
@@ -82,8 +108,8 @@ impl App {
             });
     }
 
-    /// J-ALERT (jars2000) homage: logo + categories + earth backdrop.
-    fn draw_standby_jars(&self, ctx: &egui::Context, advisories: &[String]) {
+    /// パチモン: the stylised J-ALERT homage — logo + categories + earth backdrop.
+    fn draw_standby_pachimon(&self, ctx: &egui::Context, advisories: &[String], lamps: &[LampGroup]) {
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(Color32::BLACK))
             .show(ctx, |ui| {
@@ -103,27 +129,27 @@ impl App {
                     FontId::proportional(h * 0.13),
                     Color32::from_rgb(0xff, 0x2a, 0x1f),
                 );
-                // subtle glow line under the wordmark
                 let lw = w * 0.34;
                 p.line_segment(
                     [egui::pos2(cx - lw, logo_y + h * 0.085), egui::pos2(cx + lw, logo_y + h * 0.085)],
                     egui::Stroke::new(2.0, Color32::from_rgb(0x8a, 0x12, 0x10)),
                 );
 
-                // --- category list (国民保護 / 地震 / 津波 / 火山) ---
-                let cats = ["国民保護に関する情報", "地震情報", "津波情報", "火山情報"];
+                // --- category list with lamps ---
                 let cat_size = (h * 0.05).min(w * 0.04);
                 let left = rect.left() + w * 0.12;
                 let mut y = rect.top() + h * 0.36;
                 let step = cat_size * 1.9;
-                for c in cats {
+                for g in LampGroup::ALL {
+                    let lit = lamps.contains(&g);
                     let sq = cat_size * 0.62;
                     let r = egui::Rect::from_min_size(egui::pos2(left, y - sq / 2.0), egui::vec2(sq, sq));
-                    p.rect_filled(r, 1.0, Color32::from_rgb(0xe9, 0xee, 0xf6));
+                    let lamp = if lit { Color32::from_rgb(0xff, 0x3a, 0x2a) } else { Color32::from_rgb(0xe9, 0xee, 0xf6) };
+                    p.rect_filled(r, 1.0, lamp);
                     p.text(
                         egui::pos2(left + sq + cat_size * 0.55, y),
                         Align2_LEFT_CENTER(),
-                        c,
+                        g.label(),
                         FontId::proportional(cat_size),
                         Color32::from_rgb(0xe9, 0xee, 0xf6),
                     );
@@ -160,6 +186,107 @@ impl App {
             });
     }
 
+    /// リアル: a faithful reproduction of the legacy receiver's idle screen — a flat,
+    /// institutional layout with a header band, the four information lamps and a
+    /// status footer (no decorative starfield).
+    fn draw_standby_real(&self, ctx: &egui::Context, advisories: &[String], lamps: &[LampGroup]) {
+        let base = Color32::from_rgb(0x06, 0x1a, 0x33); // deep gov blue
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().fill(base))
+            .show(ctx, |ui| {
+                let rect = ui.max_rect();
+                let h = rect.height();
+                let w = rect.width();
+                let p = ui.painter();
+                let now = Local::now();
+
+                // --- header band ---
+                let head_h = h * 0.13;
+                let head = egui::Rect::from_min_max(rect.left_top(), egui::pos2(rect.right(), rect.top() + head_h));
+                p.rect_filled(head, 0.0, Color32::from_rgb(0x0c, 0x2b, 0x52));
+                p.line_segment(
+                    [egui::pos2(rect.left(), head.bottom()), egui::pos2(rect.right(), head.bottom())],
+                    egui::Stroke::new(2.0, Color32::from_rgb(0x2a, 0x6c, 0xb8)),
+                );
+                p.text(
+                    egui::pos2(rect.left() + w * 0.03, head.center().y),
+                    Align2_LEFT_CENTER(),
+                    "全国瞬時警報システム  J-ALERT",
+                    FontId::proportional(head_h * 0.42),
+                    Color32::from_rgb(0xff, 0xff, 0xff),
+                );
+                p.text(
+                    egui::pos2(rect.right() - w * 0.03, head.center().y),
+                    egui::Align2::RIGHT_CENTER,
+                    "J-ALERT 受信機",
+                    FontId::proportional(head_h * 0.30),
+                    Color32::from_rgb(0xa9, 0xc6, 0xea),
+                );
+
+                // --- large clock ---
+                let clock_y = rect.top() + head_h + h * 0.16;
+                p.text(
+                    egui::pos2(rect.center().x, clock_y),
+                    egui::Align2::CENTER_CENTER,
+                    now.format("%H:%M:%S").to_string(),
+                    FontId::proportional(h * 0.16),
+                    Color32::from_rgb(0xe9, 0xf1, 0xff),
+                );
+                p.text(
+                    egui::pos2(rect.center().x, clock_y + h * 0.11),
+                    egui::Align2::CENTER_CENTER,
+                    now.format("%Y年%-m月%-d日 (%a)").to_string(),
+                    FontId::proportional(h * 0.04),
+                    Color32::from_rgb(0xa9, 0xc6, 0xea),
+                );
+
+                // --- four information lamps ---
+                let panel_top = clock_y + h * 0.2;
+                let row_h = h * 0.085;
+                let lamp_w = w * 0.5;
+                let lamp_x = rect.center().x - lamp_w / 2.0;
+                let mut y = panel_top;
+                for g in LampGroup::ALL {
+                    let lit = lamps.contains(&g);
+                    let row = egui::Rect::from_min_size(egui::pos2(lamp_x, y), egui::vec2(lamp_w, row_h * 0.84));
+                    p.rect_filled(row, 4.0, Color32::from_rgb(0x0a, 0x24, 0x46));
+                    p.rect_stroke(row, 4.0, egui::Stroke::new(1.0, Color32::from_rgb(0x21, 0x53, 0x8d)));
+                    // lamp indicator
+                    let lc = if lit { Color32::from_rgb(0xff, 0x3a, 0x2a) } else { Color32::from_rgb(0x2f, 0xb6, 0x6e) };
+                    p.circle_filled(egui::pos2(row.left() + row_h * 0.42, row.center().y), row_h * 0.22, lc);
+                    p.text(
+                        egui::pos2(row.left() + row_h * 0.9, row.center().y),
+                        Align2_LEFT_CENTER(),
+                        g.label(),
+                        FontId::proportional(row_h * 0.38),
+                        Color32::from_rgb(0xe6, 0xee, 0xfb),
+                    );
+                    p.text(
+                        egui::pos2(row.right() - row_h * 0.3, row.center().y),
+                        egui::Align2::RIGHT_CENTER,
+                        if lit { "受信中" } else { "待機" },
+                        FontId::proportional(row_h * 0.32),
+                        if lit { Color32::from_rgb(0xff, 0xc9, 0xc2) } else { Color32::from_rgb(0x8f, 0xb2, 0xd6) },
+                    );
+                    y += row_h;
+                }
+
+                // --- status footer ---
+                let foot_h = h * 0.07;
+                let foot = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - foot_h), rect.max);
+                p.rect_filled(foot, 0.0, Color32::from_rgb(0x0c, 0x2b, 0x52));
+                p.text(
+                    egui::pos2(rect.left() + w * 0.03, foot.center().y),
+                    Align2_LEFT_CENTER(),
+                    "● 受信待機中　異常はありません",
+                    FontId::proportional(foot_h * 0.42),
+                    Color32::from_rgb(0x3c, 0xe0, 0x90),
+                );
+
+                advisory_banner(ui, rect, advisories);
+            });
+    }
+
     fn draw_alert(&self, ctx: &egui::Context, p: &AlertView) {
         let bg = sev_color(p.severity);
         egui::CentralPanel::default()
@@ -179,7 +306,10 @@ impl App {
                 ui.add_space(h * 0.04);
                 ui.horizontal(|ui| {
                     ui.add_space(full.width() * 0.04);
-                    ui.label(RichText::new(p.severity.label()).font(FontId::proportional(h * 0.12)).strong().color(ink));
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new(p.heading()).font(FontId::proportional(h * 0.12)).strong().color(ink));
+                        ui.label(RichText::new(format!("{}  電文種別 {}", p.category.label(), p.type_code)).size(h * 0.028).color(Color32::from_white_alpha(220)));
+                    });
                     ui.add_space(24.0);
                     ui.vertical(|ui| {
                         ui.label(RichText::new(&p.area).font(FontId::proportional(h * 0.075)).strong().color(ink));
@@ -193,20 +323,22 @@ impl App {
                 });
 
                 ui.add_space(h * 0.04);
-                // Kinds as chips.
-                ui.horizontal_wrapped(|ui| {
-                    ui.add_space(full.width() * 0.04);
-                    for k in &p.kinds {
-                        let chip = RichText::new(k).font(FontId::proportional(h * 0.05)).strong().color(ink);
-                        egui::Frame::none()
-                            .fill(Color32::from_black_alpha(70))
-                            .stroke(egui::Stroke::new(2.0, Color32::from_white_alpha(140)))
-                            .rounding(10.0)
-                            .inner_margin(egui::Margin::symmetric(16.0, 8.0))
-                            .show(ui, |ui| { ui.label(chip); });
-                        ui.add_space(10.0);
-                    }
-                });
+                // Kinds as chips (weather); other categories may have none.
+                if !p.kinds.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add_space(full.width() * 0.04);
+                        for k in &p.kinds {
+                            let chip = RichText::new(k).font(FontId::proportional(h * 0.05)).strong().color(ink);
+                            egui::Frame::none()
+                                .fill(Color32::from_black_alpha(70))
+                                .stroke(egui::Stroke::new(2.0, Color32::from_white_alpha(140)))
+                                .rounding(10.0)
+                                .inner_margin(egui::Margin::symmetric(16.0, 8.0))
+                                .show(ui, |ui| { ui.label(chip); });
+                            ui.add_space(10.0);
+                        }
+                    });
+                }
 
                 ui.add_space(h * 0.03);
                 if !p.headline.is_empty() {
@@ -247,12 +379,11 @@ impl App {
                         ui.label(RichText::new(format!("受信 {}", hms(p.rx_time_ms))).size(h * 0.026).color(Color32::from_white_alpha(230)));
                     });
                 });
-                let _ = sev_ink; // referenced for parity with web tags
             });
     }
 }
 
-/// Yellow 注意報 banner pinned to the bottom of the standby screen.
+/// Yellow 注意報/情報 banner pinned to the bottom of the standby screen.
 fn advisory_banner(ui: &egui::Ui, rect: egui::Rect, advisories: &[String]) {
     if advisories.is_empty() {
         return;
@@ -264,7 +395,7 @@ fn advisory_banner(ui: &egui::Ui, rect: egui::Rect, advisories: &[String]) {
     p.text(
         egui::pos2(bar.left() + 24.0, bar.center().y),
         Align2_LEFT_CENTER(),
-        format!("注意報　{}", advisories.join("　／　")),
+        format!("注意・情報　{}", advisories.join("　／　")),
         FontId::proportional((bar_h * 0.4).min(26.0)),
         Color32::from_rgb(0x1a, 0x1a, 0x1c),
     );
@@ -298,24 +429,9 @@ fn paint_space_backdrop(ui: &egui::Ui, rect: egui::Rect, time: f64) {
     let radius = w * 0.62;
     let center = egui::pos2(cx, rect.bottom() + radius * 0.62);
     p.circle_filled(center, radius, Color32::from_rgb(0x07, 0x1a, 0x33));
-    // landmass / lighter ocean hints
     p.circle_filled(center + egui::vec2(-w * 0.12, -radius * 0.18), radius * 0.34, Color32::from_rgb(0x0e, 0x33, 0x55));
     p.circle_filled(center + egui::vec2(w * 0.16, -radius * 0.12), radius * 0.22, Color32::from_rgb(0x10, 0x3a, 0x42));
-    // atmosphere glow rim
     p.circle_stroke(center, radius + 1.0, egui::Stroke::new(3.0, Color32::from_rgb(0x36, 0x8f, 0xe0)));
     p.circle_stroke(center, radius + 6.0, egui::Stroke::new(8.0, Color32::from_rgba_unmultiplied(0x36, 0x8f, 0xe0, 40)));
     let _ = h;
-}
-
-fn area_of(area_name: &str, head_title: &str) -> String {
-    if !area_name.is_empty() {
-        area_name.to_string()
-    } else {
-        head_title.to_string()
-    }
-}
-
-#[allow(non_snake_case)]
-fn Align2_LEFT_CENTER() -> egui::Align2 {
-    egui::Align2([egui::Align::Min, egui::Align::Center])
 }

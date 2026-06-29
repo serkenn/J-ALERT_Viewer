@@ -37,6 +37,8 @@
   #standby .cats{position:absolute;top:34%;left:11%;display:flex;flex-direction:column;gap:1.1em}
   #standby .cats div{display:flex;align-items:center;gap:.5em;font-size:4.6vh;font-weight:600;color:#e9eef6}
   #standby .cats div::before{content:"";width:.62em;height:.62em;background:#e9eef6;display:inline-block}
+  #standby .cats div.lit::before{background:#ff3a2a;box-shadow:0 0 12px #ff3a2a}
+  #standby .cats div.lit{color:#ffd5d0}
   #standby .clock{position:absolute;top:5%;right:4%;text-align:right}
   #standby .clock .t{font-size:6vh;font-variant-numeric:tabular-nums;color:#dfe7ff}
   #standby .clock .d{font-size:3vh;color:#9dabcf}
@@ -78,7 +80,7 @@
     <div class="stars"></div>
     <div class="earth"></div>
     <div class="logo">J-ALERT</div>
-    <div class="cats"><div>国民保護に関する情報</div><div>地震情報</div><div>津波情報</div><div>火山情報</div></div>
+    <div class="cats"><div data-grp="国民保護">国民保護に関する情報</div><div data-grp="地震">地震情報</div><div data-grp="津波">津波情報</div><div data-grp="火山">火山情報</div></div>
     <div class="clock"><div class="t" id="clk">--:--:--</div><div class="d" id="dat"></div></div>
     <div class="health">● 受信待機中 / 異常なし</div>
   </section>
@@ -111,22 +113,37 @@ setInterval(tick,250);tick();
 function hms(ms){if(!ms)return"—";const d=new Date(ms);return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;}
 function rep(iso){if(!iso)return"—";const d=new Date(iso);return isNaN(d)?iso:`${d.getMonth()+1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;}
 
+// Which standby lamp a category belongs to.
+function grpOf(cat){
+  if(!cat) return null;
+  if(cat.indexOf("国民保護")>=0) return "国民保護";
+  if(cat.indexOf("地震")>=0||cat.indexOf("震度")>=0) return "地震";
+  if(cat.indexOf("津波")>=0) return "津波";
+  if(cat.indexOf("火山")>=0||cat.indexOf("噴火")>=0) return "火山";
+  return null;
+}
+
 function render(s){
   const alertOn = s.mode==="alert" && s.primary;
   $("#alert").classList.toggle("on",!!alertOn);
   $("#standby").style.display = alertOn ? "none":"block";
 
+  // light the standby category lamps for anything currently active
+  const lit=new Set();
+  for(const a of (s.alerts||[]).concat(s.advisories||[])){ const g=grpOf(a.category); if(g) lit.add(g); }
+  document.querySelectorAll("#standby .cats div").forEach(d=>d.classList.toggle("lit",lit.has(d.dataset.grp)));
+
   // advisory banner (when not full alert)
   const adv=$("#adv");
   if(!alertOn && (s.advisories||[]).length){
-    $("#advtxt").textContent=s.advisories.map(a=>`【${a.areaName}】`+(a.kinds||[]).join("・")).join("　／　");
+    $("#advtxt").textContent=s.advisories.map(a=>`【${a.areaName}】`+((a.kinds||[]).join("・")||a.category||"")).join("　／　");
     adv.classList.add("on");
   } else adv.classList.remove("on");
 
   if(alertOn){
     const p=s.primary, sev=SEV[p.severity]||"warning";
     const al=$("#alert"); al.classList.remove("warning","emergency"); al.classList.add(sev);
-    $("#sev").textContent=LBL[p.severity]||"警報";
+    $("#sev").textContent = p.category==="気象警報・注意報" ? (LBL[p.severity]||"警報") : (p.category||LBL[p.severity]||"警報");
     $("#area").textContent=p.areaName||p.headTitle||"";
     let it=p.infoType||"発表"; if((s.alerts||[]).length>1) it+=`　／　他 ${s.alerts.length-1} 件発表中`;
     $("#it").textContent=it;

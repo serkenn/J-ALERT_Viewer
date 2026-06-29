@@ -1,15 +1,20 @@
-//! Turn one JSONL line from the plugin into an [`AlertChannel`].
+//! Turn one JSONL line from the SDR# plugin into an [`AlertChannel`], using the
+//! legacy telegram model.
 //!
-//! Severity comes authoritatively from the inflated JMA XML: the Body/Warning
-//! block whose `type` is the prefectural forecast area (気象警報・注意報（府県
-//! 予報区等）) lists each warning Kind with a Status of 発表 / 継続 / 解除. A
-//! Kind is "in force" when its Status is not 解除/なし; its severity comes from
-//! the Name suffix (特別警報 > 警報 > 注意報).
+//! Every line carries (at least) a telegram type code. We map it to an
+//! [`AlertType`] and a [`Category`] (情報種別). Weather telegrams (WRMA) also
+//! carry the inflated JMA XML, from which we grade severity authoritatively: the
+//! Body/Warning block for the prefectural forecast area lists each Kind with a
+//! Status of 発表 / 継続 / 解除; a Kind is "in force" when its Status is not
+//! 解除/なし and its severity comes from the Name suffix (特別警報 > 警報 > 注意報).
+//!
+//! Non-weather categories (地震・津波・緊急地震速報・国民保護) don't need the XML;
+//! their level is fixed by the category (see [`AlertChannel::effective_severity`]).
 
-use crate::model::{AlertChannel, AlertKind, Severity};
+use crate::model::{AlertChannel, AlertKind, AlertType, Category, RxChannel, Severity};
 use std::collections::BTreeSet;
 
-/// Returns `None` for lines that carry no usable weather warning.
+/// Returns `None` for lines that carry no usable telegram.
 pub fn from_json_line(line: &str) -> Option<AlertChannel> {
     let line = line.trim();
     if line.is_empty() {
@@ -17,17 +22,46 @@ pub fn from_json_line(line: &str) -> Option<AlertChannel> {
     }
     let v: serde_json::Value = serde_json::from_str(line).ok()?;
 
-    // Only decoded JMA telegrams carry XML we can classify.
+    // Only decoded telegrams are classifiable.
     if v.get("decoded").and_then(|b| b.as_bool()) != Some(true) {
-        return None;
-    }
-    let xml = v.get("xml").and_then(|s| s.as_str()).unwrap_or("");
-    if xml.is_empty() {
         return None;
     }
 
     let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let xml = s("xml");
+
+    // Telegram type code: explicit `alert_type`, else the plugin's `chunk_type`.
+    let type_code = {
+        let at = s("alert_type");
+        if !at.is_empty() {
+            at
+        } else {
+            s("chunk_type")
+        }
+    };
+    let alert_type = AlertType::from_code(&type_code);
+
+    // 情報種別: explicit `alert_sub_type`, else inferred from the type / title.
+    let category = {
+        let sub = s("alert_sub_type");
+        if !sub.is_empty() {
+            Category::from_sub_type(&sub)
+        } else if alert_type == AlertType::Wrma {
+            Category::Weather
+        } else {
+            Category::from_alert_type(alert_type)
+        }
+    };
+
+    // A line is usable if it has XML (weather) or any telegram typing.
+    if xml.is_empty() && alert_type == AlertType::Unknown {
+        return None;
+    }
+
     let mut ch = AlertChannel {
+        alert_type,
+        category,
+        allowed: true, // refined by the display settings in AppState::ingest
         title: s("title"),
         head_title: s("head_title"),
         info_type: s("info_type"),
@@ -35,22 +69,32 @@ pub fn from_json_line(line: &str) -> Option<AlertChannel> {
         report_time: s("report_time"),
         packet_time: s("packet_time"),
         rx_time_ms: v.get("rx_time_ms").and_then(|n| n.as_i64()).unwrap_or(0),
-        xml: xml.to_string(),
+        channel: RxChannel::from_str(&{
+            let c = s("channel");
+            if c.is_empty() { s("source") } else { c }
+        }),
+        xml: xml.clone(),
         ..Default::default()
     };
-    ch.key = if !ch.head_title.is_empty() {
+
+    if alert_type == AlertType::Wrma && !xml.is_empty() {
+        classify_weather_xml(&xml, &mut ch);
+    }
+
+    // De-duplication key: category + the prefectural area (or title).
+    let area = if !ch.head_title.is_empty() {
         ch.head_title.clone()
     } else if !ch.title.is_empty() {
         ch.title.clone()
     } else {
         ch.packet_time.clone()
     };
+    ch.key = format!("{}|{}", ch.category.label(), area);
 
-    classify_xml(xml, &mut ch);
     Some(ch)
 }
 
-fn classify_xml(xml: &str, ch: &mut AlertChannel) {
+fn classify_weather_xml(xml: &str, ch: &mut AlertChannel) {
     let doc = match roxmltree::Document::parse(xml) {
         Ok(d) => d,
         Err(_) => return,
@@ -138,7 +182,7 @@ mod tests {
              <Area><Name>{area}</Name><Code>014030</Code></Area></Item></Warning></Body></Report>"
         );
         serde_json::json!({
-            "decoded": true, "rx_time_ms": 1_000i64, "chunk_type": "wrmx",
+            "decoded": true, "rx_time_ms": 1_000i64, "chunk_type": "WRMA",
             "head_title": format!("{area}気象警報・注意報"), "info_type": info,
             "headline": "テスト", "packet_time": "20260628200000000", "xml": xml,
         })
@@ -146,30 +190,69 @@ mod tests {
     }
 
     #[test]
-    fn warning_is_classified() {
+    fn weather_warning_is_classified() {
         let c = from_json_line(&jline("東京都", &[("大雨警報", "発表"), ("雷注意報", "発表")], "発表")).unwrap();
+        assert_eq!(c.alert_type, AlertType::Wrma);
+        assert_eq!(c.category, Category::Weather);
         assert_eq!(c.severity, Severity::Warning);
         assert_eq!(c.area_name, "東京都");
         assert_eq!(c.kinds.len(), 2);
         assert_eq!(c.kinds[0].name, "大雨警報"); // most severe first
+        assert!(c.is_fullscreen());
     }
 
     #[test]
     fn emergency_beats_warning() {
         let c = from_json_line(&jline("沖縄", &[("大雨特別警報", "発表"), ("暴風警報", "発表")], "発表")).unwrap();
-        assert_eq!(c.severity, Severity::Emergency);
+        assert_eq!(c.effective_severity(), Severity::Emergency);
     }
 
     #[test]
     fn cancelled_kinds_drop_severity() {
         let c = from_json_line(&jline("東京都", &[("大雨警報", "解除"), ("雷注意報", "継続")], "更新")).unwrap();
         assert_eq!(c.severity, Severity::Advisory); // only 雷注意報 remains in force
+        assert!(!c.is_fullscreen());
     }
 
     #[test]
-    fn all_cancelled_is_none() {
-        let c = from_json_line(&jline("岐阜県", &[("大雨注意報", "解除")], "発表")).unwrap();
-        assert_eq!(c.severity, Severity::None);
+    fn eew_telegram_classifies_without_xml() {
+        let line = serde_json::json!({
+            "decoded": true, "rx_time_ms": 2i64, "alert_type": "EPRQ",
+            "alert_sub_type": "緊急地震速報", "info_type": "発表",
+            "headline": "強い揺れに警戒", "channel": "衛星系",
+        })
+        .to_string();
+        let c = from_json_line(&line).unwrap();
+        assert_eq!(c.alert_type, AlertType::Eprq);
+        assert_eq!(c.category, Category::Eew);
+        assert_eq!(c.channel, RxChannel::Satellite);
+        assert!(c.is_fullscreen());
+    }
+
+    #[test]
+    fn civil_protection_is_emergency() {
+        let line = serde_json::json!({
+            "decoded": true, "rx_time_ms": 3i64, "alert_type": "JALT",
+            "alert_sub_type": "国民保護情報", "info_type": "発表",
+            "headline": "ミサイル発射情報",
+        })
+        .to_string();
+        let c = from_json_line(&line).unwrap();
+        assert_eq!(c.category, Category::CivilProtection);
+        assert_eq!(c.effective_severity(), Severity::Emergency);
+    }
+
+    #[test]
+    fn seismic_intensity_is_advisory_banner() {
+        let line = serde_json::json!({
+            "decoded": true, "rx_time_ms": 4i64, "alert_type": "IOEQ",
+            "alert_sub_type": "震度速報", "info_type": "発表",
+        })
+        .to_string();
+        let c = from_json_line(&line).unwrap();
+        assert_eq!(c.category, Category::SeismicIntensity);
+        assert_eq!(c.effective_severity(), Severity::Advisory);
+        assert!(!c.is_fullscreen());
     }
 
     #[test]

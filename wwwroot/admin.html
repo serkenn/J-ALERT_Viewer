@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>J-ALERT 受信箱</title>
-<!-- 管理UI: デジタル庁デザインシステム (DADS) に準拠した配色・タイポgrafィ -->
+<title>受信機 管理 — 緊急情報一覧</title>
+<!-- 管理UI: デジタル庁デザインシステム (DADS) に準拠した配色・タイポグラフィ -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
@@ -66,7 +66,7 @@
   .pill{background:var(--warning);color:#fff;border-radius:999px;padding:2px 10px;font-size:13px;font-weight:700;min-width:24px;text-align:center;display:inline-block}
   .pill.zero{background:var(--surface);color:var(--text-sub)}
 
-  .wrap{display:grid;grid-template-columns:minmax(340px,460px) 1fr;height:calc(100vh - 55px)}
+  .wrap{display:grid;grid-template-columns:minmax(360px,480px) 1fr;height:calc(100vh - 55px)}
   .list{overflow-y:auto;border-right:1px solid var(--border);background:var(--surface-2)}
   .empty{color:var(--text-sub);text-align:center;padding:64px 20px}
 
@@ -85,6 +85,7 @@
   .row.read{background:var(--surface-2)}
   .row.read .area,.row.read .line2{color:var(--text-sub)}
   .it{font-size:12px;color:var(--text-sub);border:1px solid var(--border);border-radius:5px;padding:1px 7px;background:var(--bg)}
+  .code{font-size:11px;color:var(--text-weak);font-family:ui-monospace,Consolas,monospace}
   .row .line2{color:var(--text-sub);font-size:14px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .row .time{color:var(--text-sub);font-size:13px;text-align:right;white-space:nowrap;padding-top:2px}
   .unreaddot{width:9px;height:9px;border-radius:50%;background:var(--primary);position:absolute;left:7px;top:20px}
@@ -113,7 +114,7 @@
 </head>
 <body>
   <header class="top">
-    <span class="title">J-ALERT 受信箱<small>受信履歴 / 管理</small></span>
+    <span class="title">受信機 管理<small>緊急情報一覧</small></span>
     <span class="status"><span id="dot" class="dot"></span><span id="conn">—</span></span>
     <span class="status">受信 <b id="total">0</b> 件</span>
     <span class="spacer"></span>
@@ -152,8 +153,11 @@ function fmt(ms){if(!ms)return"—";const d=new Date(ms);
   return `${d.getMonth()+1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;}
 function fmtRep(iso){if(!iso)return"—";const d=new Date(iso);if(isNaN(d))return iso;
   return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;}
+// For weather the severity label (警報/注意報) is meaningful; otherwise show the
+// 情報種別 (category) name.
+function tagText(it){ return it.category==="気象警報・注意報" ? it.severityLabel : (it.category||it.severityLabel); }
 function sevtag(it){
-  return `<span class="sevtag" style="background:${SEVCOLOR[it.severity]};color:${SEVINK[it.severity]||"#fff"}">${esc(it.severityLabel)}</span>`;
+  return `<span class="sevtag" style="background:${SEVCOLOR[it.severity]};color:${SEVINK[it.severity]||"#fff"}">${esc(tagText(it))}</span>`;
 }
 
 function render(s){
@@ -180,6 +184,7 @@ function renderList(){
       `<div class="bar" style="background:${SEVCOLOR[it.severity]}"></div>`+
       `<div class="main"><div class="line1">${sevtag(it)}`+
         `<span class="area">${esc(it.areaName||it.headTitle||"")}</span>`+
+        `<span class="code">[${esc(it.alertType||"")}/${esc(it.channel||"")}]</span>`+
         `<span class="it">${esc(it.infoType||"")}</span></div>`+
         `<div class="line2">${esc(kinds)}</div></div>`+
       `<div class="time">${fmt(it.rxTimeMs)}</div>`+
@@ -192,12 +197,16 @@ function renderList(){
 
 function renderDetail(it){
   const xmlPrev = $("#xmlBox") && $("#xmlBox").classList.contains("show");
-  const sub=[`発表種別<b>${esc(it.infoType||"—")}</b>`,
+  const sub=[`情報種別<b>${esc(it.category||"—")}</b>`,
+             `電文種別<b>${esc(it.alertType||"—")}</b>`,
+             `受信系統<b>${esc(it.channel||"—")}</b>`,
+             `発表種別<b>${esc(it.infoType||"—")}</b>`,
              `発表時刻<b>${esc(fmtRep(it.reportTime))}</b>`,
              `受信時刻<b>${esc(fmt(it.rxTimeMs))}</b>`,
              `電文時刻<b>${esc(it.packetTime||"—")}</b>`];
+  const hasXml = it.xml!==false; // XML link always offered; server 404s if none
   $("#detail").innerHTML=
-    `<div class="dhead">${sevtag(it)}<span class="it">${esc(it.title||"")}</span></div>`+
+    `<div class="dhead">${sevtag(it)}<span class="it">${esc(it.title||"")}</span>${it.allowed===false?'<span class="it">表示対象外</span>':''}</div>`+
     `<h1 class="darea">${esc(it.areaName||it.headTitle||"")}</h1>`+
     `<div class="dsub">${sub.map(x=>`<span>${x}</span>`).join("")}</div>`+
     ((it.kinds||[]).length?`<p class="sech">発表中の種別</p><div class="kinds">${it.kinds.map(k=>`<span class="kind">${esc(k)}</span>`).join("")}</div>`:"")+
@@ -211,6 +220,7 @@ function renderDetail(it){
   $("#xmlBtn").onclick=()=>loadXml(it.id);
   $("#toggleRead").onclick=()=>setRead(it.id,!it.read);
   if(xmlPrev) loadXml(it.id);
+  void hasXml;
 }
 
 async function loadXml(id){

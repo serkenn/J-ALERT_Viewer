@@ -1,11 +1,12 @@
-//! GUI: the eframe application shell plus the two views.
+//! GUI: the eframe application shell plus the kiosk display and the ported
+//! legacy management screens.
 
+mod admin;
 mod display;
-mod inbox;
 
 use chrono::{DateTime, Local, TimeZone};
 use egui::Color32;
-use jalert_receiver::model::Severity;
+use jalert_receiver::model::{Category, Severity};
 use jalert_receiver::source::{SourceConfig, SourceCtl};
 use jalert_receiver::state::AppState;
 use jalert_receiver::web::WebHandle;
@@ -22,8 +23,21 @@ pub struct WebInit {
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum View {
-    Display,
-    Inbox,
+    Display, // 表示 (kiosk)
+    Admin,   // 管理 (従来機の web 管理画面の移植)
+}
+
+/// Tabs of the ported management screen, mirroring the legacy receiver's web
+/// controllers (Top / SystemStatus / Alerts / ExtInterfaceRules /
+/// SiteConnectTest / broadcast-link status).
+#[derive(PartialEq, Clone, Copy)]
+pub enum AdminTab {
+    Top,
+    SystemStatus,
+    Alerts,
+    Rules,
+    ConnectTest,
+    Cwsd,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -33,10 +47,13 @@ pub enum ThemePref {
     Dark,
 }
 
+/// Standby-screen styles. パチモン is the stylised homage; リアル aims to
+/// reproduce the legacy receiver's idle screen faithfully.
 #[derive(PartialEq, Clone, Copy)]
 pub enum StandbyStyle {
-    Simple,    // clock + 異常なし (default)
-    Jars2000,  // J-ALERT logo + categories + earth backdrop
+    Simple,   // 時計＋異常なし
+    Pachimon, // パチモン: J-ALERT ロゴ＋地球背景のオマージュ
+    Real,     // リアル: 実機の待機画面を忠実再現
 }
 
 pub struct App {
@@ -45,12 +62,20 @@ pub struct App {
     pub view: View,
     pub theme: ThemePref,
     pub fullscreen: bool,
+    pub standby_style: StandbyStyle,
+    // management screen
+    pub admin_tab: AdminTab,
+    pub logged_in: bool,
+    pub login_user: String,
+    pub login_pass: String,
+    pub login_err: Option<String>,
     pub selected: Option<u64>,
     pub show_xml: bool,
+    pub status_query: String,
+    // settings dialog
     pub show_settings: bool,
     pub cfg_host: String,
     pub cfg_port: String,
-    pub standby_style: StandbyStyle,
     // web server (managed at runtime from settings)
     pub web_handle: Option<WebHandle>,
     pub web_enabled: bool,
@@ -83,12 +108,18 @@ impl App {
             view: View::Display,
             theme: ThemePref::System,
             fullscreen,
+            standby_style: StandbyStyle::Simple,
+            admin_tab: AdminTab::Top,
+            logged_in: false,
+            login_user: String::new(),
+            login_pass: String::new(),
+            login_err: None,
             selected: None,
             show_xml: false,
+            status_query: String::new(),
             show_settings: false,
             cfg_host: host,
             cfg_port: port.to_string(),
-            standby_style: StandbyStyle::Simple,
             web_handle: None,
             web_enabled: web.enabled,
             web_cloudflared: web.cloudflared,
@@ -156,19 +187,18 @@ impl eframe::App for App {
 
         match self.view {
             View::Display => self.show_display(ctx),
-            View::Inbox => self.show_inbox(ctx),
+            View::Admin => self.show_admin(ctx),
         }
     }
 }
 
 impl App {
     fn top_bar(&mut self, ctx: &egui::Context) {
-        // The bar itself reads cleanly in dark; force a neutral dark visual here.
         egui::TopBottomPanel::top("bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.add_space(4.0);
                 ui.selectable_value(&mut self.view, View::Display, "🖥 表示");
-                ui.selectable_value(&mut self.view, View::Inbox, "📥 受信箱");
+                ui.selectable_value(&mut self.view, View::Admin, "🛠 管理");
 
                 let (connected, unread, source) = {
                     let st = self.state.lock().unwrap();
@@ -204,7 +234,7 @@ impl App {
                         }
                         self.show_settings = !self.show_settings;
                     }
-                    if self.view == View::Inbox {
+                    if self.view == View::Admin && self.logged_in {
                         egui::ComboBox::from_id_salt("theme")
                             .selected_text(match self.theme {
                                 ThemePref::System => "テーマ:自動",
@@ -216,8 +246,8 @@ impl App {
                                 ui.selectable_value(&mut self.theme, ThemePref::Light, "ライト");
                                 ui.selectable_value(&mut self.theme, ThemePref::Dark, "ダーク");
                             });
-                        if ui.button("すべて既読").clicked() {
-                            self.state.lock().unwrap().mark_all_read();
+                        if ui.button("ログアウト").clicked() {
+                            self.logged_in = false;
                         }
                     }
                 });
@@ -277,7 +307,13 @@ impl App {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.standby_style, StandbyStyle::Simple, "シンプル");
-                    ui.selectable_value(&mut self.standby_style, StandbyStyle::Jars2000, "JARS2000風");
+                    ui.selectable_value(&mut self.standby_style, StandbyStyle::Pachimon, "パチモン");
+                    ui.selectable_value(&mut self.standby_style, StandbyStyle::Real, "リアル");
+                });
+                ui.weak(match self.standby_style {
+                    StandbyStyle::Simple => "時計＋「異常なし」のみのシンプル表示",
+                    StandbyStyle::Pachimon => "J-ALERT ロゴ＋地球背景のオマージュ",
+                    StandbyStyle::Real => "従来機の待機画面を忠実再現",
                 });
 
                 ui.separator();
@@ -305,7 +341,7 @@ impl App {
                 if let Some(err) = &self.web_err {
                     ui.colored_label(Color32::from_rgb(0xe6, 0x00, 0x12), err);
                 } else if let Some(h) = &self.web_handle {
-                    ui.label(egui::RichText::new(format!("● 起動中  http://localhost:{}/  (表示)  /inbox (管理)", h.port)).color(Color32::from_rgb(0x27, 0xd0, 0x7a)));
+                    ui.label(egui::RichText::new(format!("● 起動中  http://localhost:{}/  (表示)  /admin (管理)", h.port)).color(Color32::from_rgb(0x27, 0xd0, 0x7a)));
                     if h.cloudflared_on {
                         ui.weak("cloudflared 公開URLはコンソール/ログに表示されます");
                     }
@@ -347,6 +383,20 @@ pub fn sev_ink(s: Severity) -> Color32 {
     }
 }
 
+/// Accent colour per information category (used in the management screens).
+pub fn cat_color(c: Category) -> Color32 {
+    match c {
+        Category::CivilProtection => Color32::from_rgb(0x9a, 0x0e, 0x8e),
+        Category::Eew => Color32::from_rgb(0xe6, 0x00, 0x12),
+        Category::Tsunami => Color32::from_rgb(0xd5, 0x4f, 0x00),
+        Category::Volcano => Color32::from_rgb(0xb0, 0x3a, 0x2e),
+        Category::Earthquake | Category::SeismicIntensity => Color32::from_rgb(0xc7, 0x8a, 0x00),
+        Category::Weather => Color32::from_rgb(0x1f, 0x6f, 0xb2),
+        Category::Test => Color32::from_rgb(0x4a, 0x8a, 0x4a),
+        Category::Other => Color32::from_rgb(0x76, 0x76, 0x80),
+    }
+}
+
 fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
@@ -382,4 +432,9 @@ pub fn report_fmt(iso: &str) -> String {
     DateTime::parse_from_rfc3339(iso)
         .map(|d| d.format("%Y/%m/%d %H:%M").to_string())
         .unwrap_or_else(|_| if iso.is_empty() { "—".into() } else { iso.to_string() })
+}
+
+#[allow(non_snake_case)]
+pub fn Align2_LEFT_CENTER() -> egui::Align2 {
+    egui::Align2([egui::Align::Min, egui::Align::Center])
 }

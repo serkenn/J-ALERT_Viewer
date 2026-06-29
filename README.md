@@ -1,68 +1,87 @@
 # J-ALERT Viewer
 
 [SDR# J-Alert デコーダプラグイン](https://github.com/serkenn) が TCP で配信する
-JSONL アラートを購読し、**ネイティブGUIの受信表示機**として動作する単体アプリ
-（Rust / eframe・egui）です。jars2000 等の自動起動受信機のように、
-**待機画面 ↔ 全画面アラート**を切り替えて表示します。
-
+JSONL 電文を購読し、**ネイティブGUI受信表示機**として動作する
+単体アプリ（Rust / eframe・egui）です。
 ```
  SDR#プラグイン ──TCP 7355(JSONL)──▶ jalert-receiver (ネイティブGUI)
-                                          └─(任意) 内蔵Web + cloudflared ──▶ 遠隔から受信箱を閲覧
+                                          ├─ 表示: 待機 ↔ 全画面アラート
+                                          ├─ 管理: 管理画面 (タブ)
+                                          └─(任意) 内蔵Web + cloudflared ──▶ 遠隔から閲覧
 ```
+
+> 受信元は SDR# プラグインの TCP JSONL のみです（衛星系/地上系の実機受信も対象外）。
 
 - **単一実行ファイル**。フォント（M PLUS 1p）と Web UI を埋め込み済みで、
   追加ファイル・ランタイム不要。ダブルクリックで GUI 起動。
 - ウィンドウGUI（winit + OpenGL）。`F11` でフルスクリーン、`Esc` で解除。
+
+## 電文モデル
+
+従来機の電文体系に合わせ、各電文は
+
+- **電文種別コード** `alert_type`：`WRMA`(気象) / `IOEQ`(地震・震度速報) /
+  `EPRQ`(緊急地震速報) / `ISSW`(津波) / `JALT`(試験・国民保護等)
+- **情報種別** `alert_sub_type`：国民保護情報 / 緊急地震速報 / 地震情報 /
+  震度速報 / 津波警報・注意報 / 火山情報 / 気象警報・注意報 / 試験・訓練
+- **表示対象 `allowed`**：緊急情報表示設定（＝外部IF動作ルール）の対象か
+
+として扱います。気象(WRMA)は従来通り JMA XML をパースし、`Body/Warning`
+（府県予報区）の `<Kind>`＋`Status`（発表/継続/解除）から **特別警報 > 警報 >
+注意報** を判定します。それ以外の情報種別は種別ごとに表示レベルが決まります
+（国民保護＝最優先全画面、緊急地震速報/津波/火山＝全画面警報、地震情報/震度速報＝
+情報バナー）。
 
 ## 画面
 
 アプリ上部のタブで切り替えます。
 
 ### 🖥 表示（kiosk）
-表示専用端末・電光掲示向け。視認性重視のダーク基調。
+表示専用端末・電光掲示向け。視認性重視。
 
 | モード | 条件 | 表示 |
 |--------|------|------|
-| 待機 | 警報・注意報なし | 時計・日付・「受信待機中／異常なし」 |
-| 注意報 | 注意報のみ | 待機画面＋下部に黄色の注意報バナー |
-| アラート | **警報** | 全画面 **赤**（種別・地域・本文・発表時刻、点滅） |
-| アラート | **特別警報** | 全画面 **紫**（同上） |
+| 待機 | 表示対象の警報なし | 待機画面（下記3スタイル） |
+| 情報 | 注意報・地震情報・震度速報など | 待機画面＋下部に黄色バナー |
+| アラート | **警報級以上の表示対象** | 全画面 **赤**（種別・地域・本文・発表時刻、点滅） |
+| アラート | **特別警報 / 国民保護** | 全画面 **紫** |
 
-ポリシーは **警報・特別警報のみ全画面**。注意報はバナー表示にとどめ、対象区域の
-全種別が解除されたら待機画面へ復帰します。複数同時発表時は最も重大／最新を全画面に、
-残りを下部に一覧表示します。
+**待機画面スタイルは3種類**（設定で切替）:
 
-### 📥 受信箱（管理）
-メールボックス風に**全受信を時系列で既読/未読管理**。
-[デジタル庁デザインシステム](https://www.digital.go.jp/policies/servicedesign/designsystem)
-準拠の配色で、**ライト/ダーク両対応**（上部のテーマ選択：自動／ライト／ダーク）。
-行クリックで既読化・本文・発表種別・**XML原文**を確認、「すべて既読」も可能。
-再送電文は自動集約して重複表示しません。
+- **シンプル**：時計＋「異常なし」のみ
+- **パチモン**：J-ALERT ロゴ＋地球背景のオマージュ
+- **リアル**： 実際の待機画面を忠実再現（ヘッダ帯＋4情報ランプ＋
+  大型時計＋ステータスフッタ）
+
+### 🛠 管理
+従来機の Web 管理画面を**ネイティブGUIのタブ**として移植。
+**ログイン**（初期値 `admin` / `jalt`）後、以下を提供します。
+
+- **トップ**：現在の状態・表示中の緊急情報サマリ
+- **システム状態**：受信機/受信系統（衛星系・地上系の最終受信）・電文種別別受信数・検索
+- **緊急情報一覧**：全受信を時系列で既読/未読管理。情報種別・電文種別・受信系統・
+  本文・**XML原文**を確認（再送電文は自動集約）
+- **外部IF動作ルール**：情報種別ごとに「画面表示（緊急情報表示設定）／音声・鳴動／
+  接点出力／同報系連携」を設定。**「画面表示」を外すとその種別は全画面化/バナーに
+  出ません**（一覧には記録）
+- **接続テスト**：受信元（SDR# プラグイン）への疎通確認
+- **同報系I/F状態**：同報系防災行政無線インタフェース状態（実機ハードが無いため模擬表示）
 
 ### ⚙ 設定（アプリ内）
 上部の「⚙ 設定」から、再起動なしで変更できます。
 - **JSONL 受信元の IP / ポート**（変更後に即再接続）
-- **待機画面スタイル**：シンプル（時計）／ JARS2000風（J-ALERT ロゴ＋国民保護・地震・
-  津波・火山情報＋地球背景）
+- **待機画面スタイル**：シンプル／パチモン／リアル
 - **Web サーバ**：起動する/しない、**ポート**、cloudflared 公開の有無（その場で起動/停止）
 
 ### Web 配信（任意 / cloudflared）
 設定で Web サーバを起動すると（または起動時 `--web` / `--cloudflared`）、ブラウザにも
 配信します。
-- `/` … **公開用 J-ALERT 表示画面**（待機 ↔ 全画面アラート、JARS2000風）
-- `/inbox` … **管理用 受信箱**（既読/未読、ライト/ダーク）
+- `/` … **公開用 J-ALERT 表示画面**（待機 ↔ 全画面アラート）
+- `/admin` … **管理用 緊急情報一覧**（既読/未読、ライト/ダーク）
 
 cloudflared を使う場合は[各自インストール](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)し、
 設定で「cloudflared で外部公開」を有効にしてください。公開 URL はコンソール／
 `jalert-receiver.log` に表示されます。
-
-## 重大度の判定
-
-各行の全文 JMA XML をパースし、`Body/Warning`（府県予報区）の `<Kind>` の
-`Name`＋`Status`（発表/継続/解除）から判定します。
-
-- **特別警報 > 警報 > 注意報**（`Name` の接尾辞で分類）。
-- `Status` が `解除`/`なし` の種別は失効として扱う。
 
 ## 実行
 
@@ -79,7 +98,7 @@ jalert-receiver --replay path/to/decoded.jsonl --replay-interval 800
 # 起動時フルスクリーン
 jalert-receiver --fullscreen
 
-# 受信箱を内蔵Webでも公開し、cloudflared で外部からも閲覧
+# 管理画面を内蔵Webでも公開し、cloudflared で外部からも閲覧
 jalert-receiver --cloudflared
 ```
 
@@ -92,25 +111,28 @@ jalert-receiver --cloudflared
 | `--replay FILE` | — | — | JSONL を再生（テスト用） |
 | `--replay-interval` | — | `800` | 再生間隔(ms) |
 | `--fullscreen` | — | off | 起動時フルスクリーン |
-| `--web` | — | off | 受信箱の内蔵 Web サーバを有効化 |
+| `--web` | — | off | 管理/表示の内蔵 Web サーバを有効化 |
 | `--web-port` | `JALERT_WEB_PORT` | `8080` | Web ポート |
 | `--cloudflared` | `JALERT_CLOUDFLARED` | off | cloudflared クイックトンネルで外部公開（`--web` も自動有効化） |
 | `--cloudflared-bin` | `JALERT_CLOUDFLARED_BIN` | `cloudflared` | cloudflared 実行ファイルのパス |
 
-### Cloudflared 対応
-`--cloudflared` を付けると起動時に
-[`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
-のクイックトンネルを内蔵 Web ポートの前段に立ち上げ、
-`https://xxxx.trycloudflare.com` 形式の**公開 URL をコンソールに表示**します。
-ファイアウォールのポート開放なしに受信箱をインターネット越しに閲覧できます。
+### テスト電文の再生（全カテゴリの確認）
+SDR# プラグイン由来の JMA 気象 XML に加え、従来機形式の電文を直接 JSONL で
+投入できます（`--replay` で利用）。1行=1電文の例:
+
+```json
+{"decoded":true,"alert_type":"EPRQ","alert_sub_type":"緊急地震速報","info_type":"発表","headline":"強い揺れに警戒してください","channel":"衛星系","rx_time_ms":0}
+{"decoded":true,"alert_type":"JALT","alert_sub_type":"国民保護情報","info_type":"発表","headline":"ミサイル発射情報","channel":"地上系","rx_time_ms":0}
+{"decoded":true,"alert_type":"IOEQ","alert_sub_type":"震度速報","info_type":"発表","headline":"最大震度4","rx_time_ms":0}
+```
 
 ## ビルド
 
 [Rust](https://rustup.rs/)（stable）が必要です。
 
 ```sh
-cargo build --release          # GUI 版（既定）
-cargo test  --no-default-features   # コアの単体テスト（GUI 抜き）
+cargo build --release               # GUI 版（既定）
+cargo test  --no-default-features    # コアの単体テスト（GUI 抜き）
 cargo run   -- --replay jalert_test_data/decoded.jsonl --replay-interval 300
 ```
 
@@ -130,9 +152,9 @@ sudo apt-get install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev \
 GPU/3Dドライバの無い環境（Proxmox 等の VM、RDP）では OpenGL も Vulkan/DX12 も
 利用できず GUI が起動しないことがあります。Windows 版 zip には **Mesa3D の
 ソフトウェア OpenGL（`opengl32.dll`）を同梱**しており、exe と同じフォルダに置く
-ことでソフトウェア描画で起動します（GPU のある PC では削除すれば GPU 描画に
-なります）。起動順序は **glow(OpenGL) → wgpu(DX12/Vulkan/WARP)** で自動選択し、
-失敗内容は exe 隣の `jalert-receiver.log` に記録されます。
+ことでソフトウェア描画で起動します。起動順序は **glow(OpenGL) →
+wgpu(DX12/Vulkan/WARP)** で自動選択し、失敗内容は exe 隣の
+`jalert-receiver.log` に記録されます。
 
 ## 配布 / Release
 タグ（`v*`）を push すると GitHub Actions が Linux / Windows のネイティブ実行

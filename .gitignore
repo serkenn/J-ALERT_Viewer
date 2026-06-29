@@ -7,3 +7,5 @@ Thumbs.db
 
 # sample-data (large local captures, not part of the app)
 jalert_test_data/
+JARS-2000/*
+JARS-2000/

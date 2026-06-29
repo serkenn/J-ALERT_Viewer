@@ -9,7 +9,7 @@ use std::process::Child;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-const INBOX_HTML: &str = include_str!("../wwwroot/inbox.html");
+const ADMIN_HTML: &str = include_str!("../wwwroot/admin.html");
 const INDEX_HTML: &str = include_str!("../wwwroot/index.html");
 
 /// A running web server; can be stopped at runtime (used by the settings UI).
@@ -70,8 +70,8 @@ fn route(
     state: &Arc<Mutex<AppState>>,
 ) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
     match path {
-        "/" => html(INDEX_HTML),       // public J-ALERT display
-        "/inbox" => html(INBOX_HTML),  // management mailbox
+        "/" => html(INDEX_HTML),        // public J-ALERT display
+        "/admin" | "/inbox" => html(ADMIN_HTML), // management (緊急情報一覧)
         "/healthz" => text("ok"),
         "/api/state" => json(state_json(&state.lock().unwrap())),
         "/api/xml" => {
@@ -120,9 +120,14 @@ fn state_json(st: &AppState) -> serde_json::Value {
 }
 
 fn channel_json(c: &AlertChannel) -> serde_json::Value {
+    let sev = c.effective_severity();
     serde_json::json!({
-        "severity": sev_num(c.severity),
-        "severityLabel": c.severity.label(),
+        "severity": sev_num(sev),
+        "severityLabel": sev.label(),
+        "category": c.category.label(),
+        "alertType": c.alert_type.code(),
+        "channel": c.channel.label(),
+        "allowed": c.allowed,
         "areaName": if c.area_name.is_empty() { &c.head_title } else { &c.area_name },
         "headTitle": c.head_title,
         "infoType": c.info_type,
@@ -132,7 +137,7 @@ fn channel_json(c: &AlertChannel) -> serde_json::Value {
         "packetTime": c.packet_time,
         "rxTimeMs": c.rx_time_ms,
         "areas": c.areas,
-        "key": c.head_title,
+        "key": c.key,
     })
 }
 
@@ -143,6 +148,10 @@ fn item_json(it: &InboxItem) -> serde_json::Value {
         "packetTime": it.packet_time,
         "severity": sev_num(it.severity),
         "severityLabel": it.severity.label(),
+        "category": it.category.label(),
+        "alertType": it.alert_type.code(),
+        "channel": it.channel.label(),
+        "allowed": it.allowed,
         "infoType": it.info_type,
         "title": it.title,
         "headTitle": it.head_title,
