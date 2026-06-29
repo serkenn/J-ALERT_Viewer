@@ -73,8 +73,27 @@ impl App {
             (st.mode().to_string(), primary, advisories, st.active_lamps())
         };
 
+        // Rising-edge: a *new* full-screen alert fires the chime + announcement.
+        if mode == "alert" {
+            if let Some(p) = &primary {
+                let key = format!("{}|{}|{}|{}", p.category.label(), p.area, p.severity.label(), p.info_type);
+                if self.last_alert_key.as_deref() != Some(key.as_str()) {
+                    self.play_alert_sound(p.category);
+                    self.last_alert_key = Some(key);
+                }
+            }
+        } else {
+            self.last_alert_key = None;
+        }
+
         match (mode.as_str(), primary) {
-            ("alert", Some(p)) => self.draw_alert(ctx, &p),
+            ("alert", Some(p)) => {
+                if self.standby_style == StandbyStyle::Real {
+                    self.draw_alert_real(ctx, &p);
+                } else {
+                    self.draw_alert(ctx, &p);
+                }
+            }
             _ => self.draw_standby(ctx, &advisories, &lamps),
         }
     }
@@ -186,104 +205,96 @@ impl App {
             });
     }
 
-    /// リアル: a faithful reproduction of the legacy receiver's idle screen — a flat,
-    /// institutional layout with a header band, the four information lamps and a
-    /// status footer (no decorative starfield).
+    /// リアル: the genuine standby screen — the real bundled image, aspect-fit on
+    /// black, with the four information lamps lit red when a group is active. If
+    /// the image failed to decode we fall back to the パチモン homage.
     fn draw_standby_real(&self, ctx: &egui::Context, advisories: &[String], lamps: &[LampGroup]) {
-        let base = Color32::from_rgb(0x06, 0x1a, 0x33); // deep gov blue
+        let tex = match self.screens.standby.as_ref() {
+            Some(t) => t,
+            None => return self.draw_standby_pachimon(ctx, advisories, lamps),
+        };
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(base))
+            .frame(egui::Frame::none().fill(Color32::BLACK))
             .show(ctx, |ui| {
-                let rect = ui.max_rect();
-                let h = rect.height();
-                let w = rect.width();
-                let p = ui.painter();
-                let now = Local::now();
+                let full = ui.max_rect();
+                let img = fit_contain(full, tex.size_vec2());
+                ui.painter().image(tex.id(), img, UV_FULL, Color32::WHITE);
 
-                // --- header band ---
-                let head_h = h * 0.13;
-                let head = egui::Rect::from_min_max(rect.left_top(), egui::pos2(rect.right(), rect.top() + head_h));
-                p.rect_filled(head, 0.0, Color32::from_rgb(0x0c, 0x2b, 0x52));
-                p.line_segment(
-                    [egui::pos2(rect.left(), head.bottom()), egui::pos2(rect.right(), head.bottom())],
-                    egui::Stroke::new(2.0, Color32::from_rgb(0x2a, 0x6c, 0xb8)),
-                );
-                p.text(
-                    egui::pos2(rect.left() + w * 0.03, head.center().y),
-                    Align2_LEFT_CENTER(),
-                    "全国瞬時警報システム  J-ALERT",
-                    FontId::proportional(head_h * 0.42),
-                    Color32::from_rgb(0xff, 0xff, 0xff),
-                );
-                p.text(
-                    egui::pos2(rect.right() - w * 0.03, head.center().y),
-                    egui::Align2::RIGHT_CENTER,
-                    "J-ALERT 受信機",
-                    FontId::proportional(head_h * 0.30),
-                    Color32::from_rgb(0xa9, 0xc6, 0xea),
-                );
-
-                // --- large clock ---
-                let clock_y = rect.top() + head_h + h * 0.16;
-                p.text(
-                    egui::pos2(rect.center().x, clock_y),
-                    egui::Align2::CENTER_CENTER,
-                    now.format("%H:%M:%S").to_string(),
-                    FontId::proportional(h * 0.16),
-                    Color32::from_rgb(0xe9, 0xf1, 0xff),
-                );
-                p.text(
-                    egui::pos2(rect.center().x, clock_y + h * 0.11),
-                    egui::Align2::CENTER_CENTER,
-                    now.format("%Y年%-m月%-d日 (%a)").to_string(),
-                    FontId::proportional(h * 0.04),
-                    Color32::from_rgb(0xa9, 0xc6, 0xea),
-                );
-
-                // --- four information lamps ---
-                let panel_top = clock_y + h * 0.2;
-                let row_h = h * 0.085;
-                let lamp_w = w * 0.5;
-                let lamp_x = rect.center().x - lamp_w / 2.0;
-                let mut y = panel_top;
-                for g in LampGroup::ALL {
-                    let lit = lamps.contains(&g);
-                    let row = egui::Rect::from_min_size(egui::pos2(lamp_x, y), egui::vec2(lamp_w, row_h * 0.84));
-                    p.rect_filled(row, 4.0, Color32::from_rgb(0x0a, 0x24, 0x46));
-                    p.rect_stroke(row, 4.0, egui::Stroke::new(1.0, Color32::from_rgb(0x21, 0x53, 0x8d)));
-                    // lamp indicator
-                    let lc = if lit { Color32::from_rgb(0xff, 0x3a, 0x2a) } else { Color32::from_rgb(0x2f, 0xb6, 0x6e) };
-                    p.circle_filled(egui::pos2(row.left() + row_h * 0.42, row.center().y), row_h * 0.22, lc);
-                    p.text(
-                        egui::pos2(row.left() + row_h * 0.9, row.center().y),
-                        Align2_LEFT_CENTER(),
-                        g.label(),
-                        FontId::proportional(row_h * 0.38),
-                        Color32::from_rgb(0xe6, 0xee, 0xfb),
-                    );
-                    p.text(
-                        egui::pos2(row.right() - row_h * 0.3, row.center().y),
-                        egui::Align2::RIGHT_CENTER,
-                        if lit { "受信中" } else { "待機" },
-                        FontId::proportional(row_h * 0.32),
-                        if lit { Color32::from_rgb(0xff, 0xc9, 0xc2) } else { Color32::from_rgb(0x8f, 0xb2, 0xd6) },
-                    );
-                    y += row_h;
+                // The standby artwork has four white lamp squares down the left;
+                // overlay red on the ones whose information group is active.
+                let ys = [0.236_f32, 0.319, 0.401, 0.483];
+                let sz = img.width() * 0.030;
+                for (i, g) in LampGroup::ALL.iter().enumerate() {
+                    if lamps.contains(g) {
+                        let c = egui::pos2(img.left() + img.width() * 0.063, img.top() + img.height() * ys[i]);
+                        ui.painter().rect_filled(
+                            egui::Rect::from_center_size(c, egui::vec2(sz, sz)),
+                            1.0,
+                            Color32::from_rgb(0xff, 0x2a, 0x1f),
+                        );
+                    }
                 }
 
-                // --- status footer ---
-                let foot_h = h * 0.07;
-                let foot = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - foot_h), rect.max);
-                p.rect_filled(foot, 0.0, Color32::from_rgb(0x0c, 0x2b, 0x52));
-                p.text(
-                    egui::pos2(rect.left() + w * 0.03, foot.center().y),
-                    Align2_LEFT_CENTER(),
-                    "● 受信待機中　異常はありません",
-                    FontId::proportional(foot_h * 0.42),
-                    Color32::from_rgb(0x3c, 0xe0, 0x90),
-                );
+                advisory_banner(ui, full, advisories);
+            });
+    }
 
-                advisory_banner(ui, rect, advisories);
+    /// リアル: a full-screen alert using the genuine per-category artwork, with the
+    /// dynamic text overlaid on a translucent panel. Weather (no artwork) falls
+    /// back to the colour-coded screen.
+    fn draw_alert_real(&self, ctx: &egui::Context, p: &AlertView) {
+        let tex = match self.screens.category(p.category) {
+            Some(t) => t,
+            None => return self.draw_alert(ctx, p),
+        };
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().fill(Color32::BLACK).inner_margin(egui::Margin::same(0.0)))
+            .show(ctx, |ui| {
+                let full = ui.max_rect();
+                let img = fit_contain(full, tex.size_vec2());
+                ui.painter().image(tex.id(), img, UV_FULL, Color32::WHITE);
+
+                // Flashing overlay to draw the eye.
+                let phase = (ctx.input(|i| i.time) * 1.1).fract();
+                if phase > 0.55 && phase < 0.78 {
+                    ui.painter().rect_filled(full, 0.0, Color32::from_white_alpha(26));
+                }
+
+                let h = full.height();
+                let panel = egui::Rect::from_min_max(
+                    egui::pos2(img.left() + img.width() * 0.05, img.top() + img.height() * 0.44),
+                    egui::pos2(img.right() - img.width() * 0.05, img.bottom() - img.height() * 0.05),
+                );
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(panel), |ui| {
+                    egui::Frame::none()
+                        .fill(Color32::from_black_alpha(150))
+                        .rounding(10.0)
+                        .inner_margin(egui::Margin::symmetric(24.0, 18.0))
+                        .show(ui, |ui| {
+                            ui.set_width(panel.width());
+                            let ink = Color32::WHITE;
+                            ui.label(RichText::new(&p.area).font(FontId::proportional(h * 0.07)).strong().color(ink));
+                            let mut line = if p.info_type.is_empty() { "発表".to_string() } else { p.info_type.clone() };
+                            if p.other_count > 0 {
+                                line = format!("{line}　／　他 {} 件発表中", p.other_count);
+                            }
+                            ui.label(RichText::new(format!("{}　{}", p.category.label(), line)).size(h * 0.032).color(ink));
+                            if !p.kinds.is_empty() {
+                                ui.add_space(h * 0.01);
+                                ui.label(RichText::new(p.kinds.join("　")).size(h * 0.038).strong().color(ink));
+                            }
+                            if !p.headline.is_empty() {
+                                ui.add_space(h * 0.01);
+                                ui.add(egui::Label::new(RichText::new(&p.headline).size(h * 0.034).color(ink)).wrap());
+                            }
+                            ui.add_space(h * 0.012);
+                            ui.label(
+                                RichText::new(format!("発表時刻 {}　／　受信 {}", report_fmt(&p.report_time), hms(p.rx_time_ms)))
+                                    .size(h * 0.024)
+                                    .color(Color32::from_white_alpha(220)),
+                            );
+                        });
+                });
             });
     }
 
@@ -434,4 +445,19 @@ fn paint_space_backdrop(ui: &egui::Ui, rect: egui::Rect, time: f64) {
     p.circle_stroke(center, radius + 1.0, egui::Stroke::new(3.0, Color32::from_rgb(0x36, 0x8f, 0xe0)));
     p.circle_stroke(center, radius + 6.0, egui::Stroke::new(8.0, Color32::from_rgba_unmultiplied(0x36, 0x8f, 0xe0, 40)));
     let _ = h;
+}
+
+/// Full texture UV (0,0)-(1,1).
+const UV_FULL: egui::Rect = egui::Rect {
+    min: egui::Pos2 { x: 0.0, y: 0.0 },
+    max: egui::Pos2 { x: 1.0, y: 1.0 },
+};
+
+/// Aspect-fit (letterbox) an image of size `img` centered within `outer`.
+fn fit_contain(outer: egui::Rect, img: egui::Vec2) -> egui::Rect {
+    if img.x <= 0.0 || img.y <= 0.0 {
+        return outer;
+    }
+    let scale = (outer.width() / img.x).min(outer.height() / img.y);
+    egui::Rect::from_center_size(outer.center(), egui::vec2(img.x * scale, img.y * scale))
 }

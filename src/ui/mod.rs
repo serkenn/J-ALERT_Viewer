@@ -2,7 +2,10 @@
 //! legacy management screens.
 
 mod admin;
+mod assets;
 mod display;
+#[cfg(feature = "audio")]
+mod sound;
 
 use chrono::{DateTime, Local, TimeZone};
 use egui::Color32;
@@ -33,11 +36,47 @@ pub enum View {
 #[derive(PartialEq, Clone, Copy)]
 pub enum AdminTab {
     Top,
+    VirtualPanel,
     SystemStatus,
     Alerts,
     Rules,
     ConnectTest,
     Cwsd,
+}
+
+/// Login user types, matching the legacy receiver's `SystemConfig#authenticate`
+/// (a user-type code + password). Default passwords come from the seed config.
+#[derive(PartialEq, Clone, Copy)]
+pub enum Role {
+    Sysadm,   // システム管理者
+    Operator, // 運用管理者
+    User,     // 一般利用者
+}
+
+impl Role {
+    pub fn label(self) -> &'static str {
+        match self {
+            Role::Sysadm => "システム管理者",
+            Role::Operator => "運用管理者",
+            Role::User => "一般利用者",
+        }
+    }
+    /// Seed defaults from the legacy configuration.
+    fn default_password(self) -> &'static str {
+        match self {
+            Role::Sysadm => "jl10ad",
+            Role::Operator => "opjl10",
+            Role::User => "usjl10",
+        }
+    }
+    pub(crate) fn authenticate(self, password: &str) -> bool {
+        password == self.default_password()
+    }
+    /// Operator privileges (運用管理): sysadm and operator qualify.
+    pub fn is_operator(self) -> bool {
+        matches!(self, Role::Sysadm | Role::Operator)
+    }
+    pub const ALL: [Role; 3] = [Role::Sysadm, Role::Operator, Role::User];
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -66,7 +105,8 @@ pub struct App {
     // management screen
     pub admin_tab: AdminTab,
     pub logged_in: bool,
-    pub login_user: String,
+    pub current_role: Role,
+    pub login_role: Role,
     pub login_pass: String,
     pub login_err: Option<String>,
     pub selected: Option<u64>,
@@ -83,6 +123,13 @@ pub struct App {
     pub cloudflared_bin: String,
     pub cfg_web_port: String,
     pub web_err: Option<String>,
+    // bundled real screen backgrounds (リアル style)
+    screens: assets::Screens,
+    // audio
+    pub sound_on: bool,
+    #[cfg(feature = "audio")]
+    sound: Option<sound::Sound>,
+    last_alert_key: Option<String>,
 }
 
 impl App {
@@ -94,6 +141,7 @@ impl App {
         web: WebInit,
     ) -> Self {
         install_fonts(&cc.egui_ctx);
+        let screens = assets::Screens::load(&cc.egui_ctx);
 
         // Wake the UI whenever the feed changes.
         let ctx = cc.egui_ctx.clone();
@@ -111,7 +159,8 @@ impl App {
             standby_style: StandbyStyle::Simple,
             admin_tab: AdminTab::Top,
             logged_in: false,
-            login_user: String::new(),
+            current_role: Role::User,
+            login_role: Role::Sysadm,
             login_pass: String::new(),
             login_err: None,
             selected: None,
@@ -126,6 +175,11 @@ impl App {
             cloudflared_bin: web.cloudflared_bin,
             cfg_web_port: web.port.to_string(),
             web_err: None,
+            screens,
+            sound_on: true,
+            #[cfg(feature = "audio")]
+            sound: sound::Sound::new(),
+            last_alert_key: None,
         };
         if web.enabled {
             app.apply_web();
@@ -162,6 +216,18 @@ impl App {
     fn toggle_fullscreen(&mut self, ctx: &egui::Context) {
         self.fullscreen = !self.fullscreen;
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
+    }
+
+    /// Play the chime + announcement for a category, honoring the sound toggle.
+    /// A no-op unless built with the `audio` feature and an output device exists.
+    pub(crate) fn play_alert_sound(&self, _category: Category) {
+        if !self.sound_on {
+            return;
+        }
+        #[cfg(feature = "audio")]
+        if let Some(s) = &self.sound {
+            s.play_alert(_category);
+        }
     }
 }
 
@@ -249,6 +315,7 @@ impl App {
                         if ui.button("ログアウト").clicked() {
                             self.logged_in = false;
                         }
+                        ui.weak(self.current_role.label());
                     }
                 });
             });
@@ -313,8 +380,15 @@ impl App {
                 ui.weak(match self.standby_style {
                     StandbyStyle::Simple => "時計＋「異常なし」のみのシンプル表示",
                     StandbyStyle::Pachimon => "J-ALERT ロゴ＋地球背景のオマージュ",
-                    StandbyStyle::Real => "従来機の待機画面を忠実再現",
+                    StandbyStyle::Real => "従来機の実画面を忠実再現（待機・アラート）",
                 });
+
+                ui.separator();
+                ui.label(egui::RichText::new("音声").strong());
+                ui.add_space(4.0);
+                ui.checkbox(&mut self.sound_on, "アラート時にチャイム・読み上げを再生する");
+                #[cfg(not(feature = "audio"))]
+                ui.weak("（このビルドは音声機能なし）");
 
                 ui.separator();
                 ui.label(egui::RichText::new("Web サーバ (ブラウザ/遠隔表示)").strong());

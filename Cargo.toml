@@ -1,6 +1,6 @@
 [package]
 name = "jalert-receiver"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "J-ALERT 受信表示機 (SDR# J-Alert プラグイン向け)"
 license = "MIT"
@@ -14,14 +14,23 @@ name = "jalert-receiver"
 path = "src/main.rs"
 
 [features]
-default = ["gui"]
-gui = ["dep:eframe", "dep:egui"]
+default = ["gui", "audio"]
+# GUI (window + embedded screen assets). `image` decodes the bundled real
+# standby/alert backgrounds.
+gui = ["dep:eframe", "dep:egui", "dep:image"]
+# Audio playback of the bundled chime/announcements (rodio -> cpal -> ALSA on
+# Linux, so a Linux build needs libasound2-dev). Runs only when the GUI is on.
+audio = ["dep:rodio"]
 
 [dependencies]
 # Both renderers enabled: try glow (OpenGL); fall back to wgpu (DX12/Vulkan,
 # incl. software WARP) for headless VMs / RDP where OpenGL is unavailable.
 eframe = { version = "0.29", optional = true, features = ["wgpu"] }
 egui = { version = "0.29", optional = true }
+# Decodes the bundled JPEG/GIF screen backgrounds to egui textures.
+image = { version = "0.25", optional = true, default-features = false, features = ["jpeg", "gif"] }
+# WAV-only audio output; keep it light (no symphonia).
+rodio = { version = "0.17", optional = true, default-features = false, features = ["wav"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 roxmltree = "0.20"

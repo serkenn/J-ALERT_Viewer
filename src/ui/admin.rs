@@ -1,20 +1,11 @@
-//! The legacy receiver's web 管理画面, ported to a native desktop view. Mirrors the
-//! original Rails controllers as tabs behind a login:
-//!
-//! - Top              … トップ (dashboard)
-//! - SystemStatus     … システム状態 (+ 検索)
-//! - Alerts           … 緊急情報一覧 (read/unread + detail + XML)
-//! - Rules            … 外部インタフェース動作ルール (緊急情報表示設定を兼ねる)
-//! - ConnectTest      … 接続テスト (この移植版では SDR# 受信元への疎通)
-//! - Cwsd             … 同報系I/F状態 (実機ハードが無いため模擬表示)
+//! The legacy receiver's web 管理画面, ported to a native desktop view. Tabs and
+//! login mirror the original Rails controllers (TopController, VirtualPanel,
+//! SystemStatus, Alerts, ExtInterfaceRules, SiteConnectTest, CwsdStatus). Login
+//! follows `SystemConfig#authenticate` (user type + password).
 
-use super::{cat_color, md_hms, report_fmt, sev_color, sev_ink, AdminTab, App, ThemePref};
+use super::{cat_color, md_hms, report_fmt, sev_color, sev_ink, AdminTab, App, Role, ThemePref};
 use egui::{Color32, FontId, RichText, Sense, Stroke};
 use jalert_receiver::model::{AlertType, Category, Severity};
-
-/// Default management credentials (documented in the README).
-const LOGIN_USER: &str = "admin";
-const LOGIN_PASS: &str = "jalt";
 
 impl App {
     pub(crate) fn show_admin(&mut self, ctx: &egui::Context) {
@@ -24,21 +15,32 @@ impl App {
             return;
         }
 
+        let operator = self.current_role.is_operator();
         egui::TopBottomPanel::top("admin_tabs").show(ctx, |ui| {
             ui.add_space(2.0);
             ui.horizontal_wrapped(|ui| {
                 ui.selectable_value(&mut self.admin_tab, AdminTab::Top, "トップ");
-                ui.selectable_value(&mut self.admin_tab, AdminTab::SystemStatus, "システム状態");
+                ui.selectable_value(&mut self.admin_tab, AdminTab::VirtualPanel, "仮想パネル");
                 ui.selectable_value(&mut self.admin_tab, AdminTab::Alerts, "緊急情報一覧");
+                // 受信単末状態表示 / 同報系I/F は運用管理者以上のみ（operator_required）
+                if operator {
+                    ui.selectable_value(&mut self.admin_tab, AdminTab::SystemStatus, "受信機状態");
+                    ui.selectable_value(&mut self.admin_tab, AdminTab::Cwsd, "同報系I/F");
+                }
                 ui.selectable_value(&mut self.admin_tab, AdminTab::Rules, "外部IF動作ルール");
                 ui.selectable_value(&mut self.admin_tab, AdminTab::ConnectTest, "接続テスト");
-                ui.selectable_value(&mut self.admin_tab, AdminTab::Cwsd, "同報系I/F");
             });
             ui.add_space(2.0);
         });
 
+        // Guard operator-only screens if the role changed.
+        if matches!(self.admin_tab, AdminTab::SystemStatus | AdminTab::Cwsd) && !operator {
+            self.admin_tab = AdminTab::Top;
+        }
+
         match self.admin_tab {
             AdminTab::Top => self.show_top(ctx),
+            AdminTab::VirtualPanel => self.show_virtual_panel(ctx),
             AdminTab::SystemStatus => self.show_system_status(ctx),
             AdminTab::Alerts => self.show_alerts(ctx),
             AdminTab::Rules => self.show_rules(ctx),
@@ -49,17 +51,23 @@ impl App {
 
     fn show_login(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add_space(ui.available_height() * 0.22);
+            ui.add_space(ui.available_height() * 0.18);
             ui.vertical_centered(|ui| {
                 ui.label(RichText::new("受信機 管理画面").size(26.0).strong());
                 ui.add_space(4.0);
-                ui.weak("ログインしてください");
+                ui.weak("ユーザ種別を選び、パスワードを入力してください");
                 ui.add_space(18.0);
                 egui::Frame::group(ui.style()).inner_margin(egui::Margin::same(18.0)).show(ui, |ui| {
-                    ui.set_width(300.0);
+                    ui.set_width(320.0);
                     egui::Grid::new("login_grid").num_columns(2).spacing([10.0, 10.0]).show(ui, |ui| {
-                        ui.label("ユーザー名");
-                        ui.add(egui::TextEdit::singleline(&mut self.login_user).desired_width(180.0).hint_text(LOGIN_USER));
+                        ui.label("ユーザ種別");
+                        egui::ComboBox::from_id_salt("login_role")
+                            .selected_text(self.login_role.label())
+                            .show_ui(ui, |ui| {
+                                for r in Role::ALL {
+                                    ui.selectable_value(&mut self.login_role, r, r.label());
+                                }
+                            });
                         ui.end_row();
                         ui.label("パスワード");
                         ui.add(egui::TextEdit::singleline(&mut self.login_pass).password(true).desired_width(180.0));
@@ -69,12 +77,14 @@ impl App {
                     let submit = ui.add_sized([ui.available_width(), 32.0], egui::Button::new("ログイン")).clicked()
                         || ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if submit {
-                        if self.login_user == LOGIN_USER && self.login_pass == LOGIN_PASS {
+                        if self.login_role.authenticate(self.login_pass.trim()) {
                             self.logged_in = true;
+                            self.current_role = self.login_role;
                             self.login_err = None;
                             self.login_pass.clear();
+                            self.admin_tab = AdminTab::Top;
                         } else {
-                            self.login_err = Some("ユーザー名またはパスワードが違います".into());
+                            self.login_err = Some("ログイン名、パスワードが一致しません".into());
                         }
                     }
                     if let Some(e) = &self.login_err {
@@ -82,7 +92,7 @@ impl App {
                         ui.colored_label(Color32::from_rgb(0xe6, 0x00, 0x12), e);
                     }
                     ui.add_space(6.0);
-                    ui.weak(format!("初期値: {LOGIN_USER} / {LOGIN_PASS}"));
+                    ui.weak("初期パスワード: システム管理者 jl10ad / 運用管理者 opjl10 / 一般利用者 usjl10");
                 });
             });
         });
@@ -157,6 +167,56 @@ impl App {
                         }
                     }
                 });
+            });
+        });
+    }
+
+    // ---- 仮想パネル（フロントパネル）----
+    fn show_virtual_panel(&mut self, ctx: &egui::Context) {
+        let (connected, last_sat, last_terr, alert) = {
+            let st = self.state.lock().unwrap();
+            (st.receiver.connected, st.last_sat_ms, st.last_terr_ms, st.mode() == "alert")
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let recent = |ms: i64| ms > 0 && now - ms < 120_000;
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                ui.add_space(8.0);
+                ui.heading("仮想パネル（フロントパネル）");
+                ui.weak("実機のフロントパネル LED を模した表示です。");
+                ui.add_space(10.0);
+
+                card(ui, "リンク状態", |ui| {
+                    ui.horizontal(|ui| {
+                        lamp_dot(ui, if connected { Lit::Green } else { Lit::Off });
+                        ui.label(if connected { "接続中" } else { "切断" });
+                    });
+                });
+
+                ui.add_space(8.0);
+                card(ui, "フロントパネル", |ui| {
+                    ui.horizontal(|ui| {
+                        lamp_col(ui, "Status", if alert { Lit::Red } else if connected { Lit::Green } else { Lit::Off });
+                        lamp_col(ui, "衛星系", if recent(last_sat) { Lit::Green } else { Lit::Off });
+                        lamp_col(ui, "地上系", if recent(last_terr) { Lit::Green } else { Lit::Off });
+                        lamp_col(ui, "アプリ", if alert { Lit::Red } else { Lit::Off });
+                        lamp_col(ui, "外部I/F", Lit::Off);
+                    });
+                });
+
+                ui.add_space(8.0);
+                card(ui, "接点出力 (DIO)", |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        for i in 1..=8 {
+                            lamp_col(ui, &format!("#{i}"), Lit::Off);
+                        }
+                    });
+                });
+                ui.weak("※ 接点出力・外部I/F の実ハードは本移植版にはありません。");
             });
         });
     }
@@ -487,6 +547,33 @@ struct Detail {
 }
 
 // ---- small widgets ----
+
+enum Lit {
+    Off,
+    Green,
+    Red,
+}
+
+fn lit_color(l: &Lit) -> Color32 {
+    match l {
+        Lit::Off => Color32::from_rgba_unmultiplied(0x44, 0x44, 0x55, 125),
+        Lit::Green => Color32::from_rgb(0x11, 0xee, 0x22),
+        Lit::Red => Color32::from_rgb(0xfe, 0x33, 0x11),
+    }
+}
+
+fn lamp_dot(ui: &mut egui::Ui, lit: Lit) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), Sense::hover());
+    ui.painter().circle_filled(rect.center(), 7.0, lit_color(&lit));
+}
+
+fn lamp_col(ui: &mut egui::Ui, label: &str, lit: Lit) {
+    ui.vertical(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(56.0, 28.0), Sense::hover());
+        ui.painter().circle_filled(rect.center(), 11.0, lit_color(&lit));
+        ui.label(RichText::new(label).size(11.0));
+    });
+}
 
 fn card(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::group(ui.style())
