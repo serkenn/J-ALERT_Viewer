@@ -82,25 +82,43 @@ impl App {
             (st.mode().to_string(), primary, advisories, st.active_lamps())
         };
 
+        // Identity of the current primary alert (for sound rising-edge + ACK).
+        let alert_key = primary
+            .as_ref()
+            .map(|p| format!("{}|{}|{}|{}", p.category.label(), p.area, p.severity.label(), p.info_type));
+
         // Rising-edge: a *new* full-screen alert fires the chime + announcement.
         if mode == "alert" {
-            if let Some(p) = &primary {
-                let key = format!("{}|{}|{}|{}", p.category.label(), p.area, p.severity.label(), p.info_type);
+            if let (Some(key), Some(p)) = (&alert_key, &primary) {
                 if self.last_alert_key.as_deref() != Some(key.as_str()) {
                     self.play_alert_sound(p.category);
-                    self.last_alert_key = Some(key);
+                    self.last_alert_key = Some(key.clone());
                 }
             }
         } else {
             self.last_alert_key = None;
+            self.acked = None; // nothing in force → reset acknowledgement
         }
 
         match (mode.as_str(), primary) {
             ("alert", Some(p)) => {
-                if self.standby_style == StandbyStyle::Real {
-                    self.draw_alert_real(ctx, &p);
+                let key = alert_key.unwrap_or_default();
+                if self.acked.as_deref() == Some(key.as_str()) {
+                    // Acknowledged: return to standby, but keep an "ongoing" ribbon.
+                    self.draw_standby(ctx, &advisories, &lamps);
+                    if ack_ribbon(ctx, &p) {
+                        self.acked = None; // 再表示
+                    }
                 } else {
-                    self.draw_alert(ctx, &p);
+                    if self.standby_style == StandbyStyle::Real {
+                        self.draw_alert_real(ctx, &p);
+                    } else {
+                        self.draw_alert(ctx, &p);
+                    }
+                    let pressed = ctx.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Space));
+                    if ack_button(ctx) || pressed {
+                        self.acked = Some(key);
+                    }
                 }
             }
             _ => self.draw_standby(ctx, &advisories, &lamps),
@@ -482,4 +500,49 @@ fn fit_contain(outer: egui::Rect, img: egui::Vec2) -> egui::Rect {
     }
     let scale = (outer.width() / img.x).min(outer.height() / img.y);
     egui::Rect::from_center_size(outer.center(), egui::vec2(img.x * scale, img.y * scale))
+}
+
+/// Floating "確認 (ACK)" button shown over a full-screen alert (top-right).
+/// Returns true when pressed.
+fn ack_button(ctx: &egui::Context) -> bool {
+    let mut clicked = false;
+    egui::Area::new(egui::Id::new("ack_btn"))
+        .anchor(egui::Align2::RIGHT_TOP, [-24.0, 24.0])
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            let btn = egui::Button::new(RichText::new("確認 (ACK)").size(22.0).strong().color(Color32::WHITE))
+                .fill(Color32::from_rgb(0x10, 0x10, 0x14))
+                .stroke(egui::Stroke::new(2.0, Color32::WHITE))
+                .min_size(egui::vec2(170.0, 56.0));
+            clicked = ui.add(btn).clicked();
+        });
+    clicked
+}
+
+/// Ribbon shown on the standby screen while an acknowledged alert is still in
+/// force. Returns true when 再表示 is pressed.
+fn ack_ribbon(ctx: &egui::Context, p: &AlertView) -> bool {
+    let mut reshow = false;
+    egui::Area::new(egui::Id::new("ack_ribbon"))
+        .anchor(egui::Align2::CENTER_TOP, [0.0, 16.0])
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            egui::Frame::none()
+                .fill(Color32::from_rgb(0x9a, 0x0e, 0x1a))
+                .rounding(8.0)
+                .inner_margin(egui::Margin::symmetric(18.0, 10.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("● {} を確認済み（継続中）", p.heading()))
+                                .size(18.0)
+                                .strong()
+                                .color(Color32::WHITE),
+                        );
+                        ui.add_space(8.0);
+                        reshow = ui.button("再表示").clicked();
+                    });
+                });
+        });
+    reshow
 }

@@ -2,6 +2,7 @@
 //! legacy management screens.
 
 mod admin;
+mod areas;
 mod assets;
 mod display;
 #[cfg(feature = "audio")]
@@ -37,6 +38,7 @@ pub enum View {
 pub enum AdminTab {
     Top,
     VirtualPanel,
+    Manual,
     SystemStatus,
     Alerts,
     Rules,
@@ -130,6 +132,14 @@ pub struct App {
     #[cfg(feature = "audio")]
     sound: Option<sound::Sound>,
     last_alert_key: Option<String>,
+    // ACK: the alert key the operator has acknowledged (display returns to standby
+    // until a new/changed alert arrives).
+    acked: Option<String>,
+    // 手動発報 form state
+    man_category: Category,
+    man_pref: usize,
+    man_city: usize,
+    man_headline: String,
 }
 
 impl App {
@@ -180,6 +190,11 @@ impl App {
             #[cfg(feature = "audio")]
             sound: sound::Sound::new(),
             last_alert_key: None,
+            acked: None,
+            man_category: Category::CivilProtection,
+            man_pref: 0,
+            man_city: 0,
+            man_headline: String::new(),
         };
         if web.enabled {
             app.apply_web();

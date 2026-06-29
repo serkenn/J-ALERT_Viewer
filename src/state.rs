@@ -310,6 +310,39 @@ impl AppState {
         .collect()
     }
 
+    /// Inject a manually-raised alert (管理画面の手動発報). Builds a synthetic
+    /// channel for the chosen 情報種別 + 地域 and ingests it like a received one.
+    pub fn inject_manual(
+        &mut self,
+        alert_type: AlertType,
+        category: Category,
+        area: String,
+        sub_type: String,
+        headline: String,
+    ) {
+        let severity = if category == Category::Weather { Severity::Warning } else { Severity::None };
+        let mut ch = AlertChannel {
+            alert_type,
+            category,
+            allowed: true,
+            head_title: area.clone(),
+            area_name: area.clone(),
+            sub_type,
+            info_type: "発表".into(),
+            headline,
+            rx_time_ms: Utc::now().timestamp_millis(),
+            severity,
+            ..Default::default()
+        };
+        ch.key = format!("{}|{}", category.label(), area);
+        self.ingest(ch);
+    }
+
+    /// Clear all live alert channels (手動発報の全解除). History is kept.
+    pub fn clear_alerts(&mut self) {
+        self.channels.clear();
+    }
+
     /// Run a (simulated) 接続テスト. There is no real WAN/satellite uplink in
     /// this port, so it reports the local SDR# feed status instead.
     pub fn run_connect_test(&mut self) {

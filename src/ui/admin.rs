@@ -22,8 +22,9 @@ impl App {
                 ui.selectable_value(&mut self.admin_tab, AdminTab::Top, "トップ");
                 ui.selectable_value(&mut self.admin_tab, AdminTab::VirtualPanel, "仮想パネル");
                 ui.selectable_value(&mut self.admin_tab, AdminTab::Alerts, "緊急情報一覧");
-                // 受信単末状態表示 / 同報系I/F は運用管理者以上のみ（operator_required）
+                // 受信機状態 / 同報系I/F / 手動発報 は運用管理者以上のみ（operator_required）
                 if operator {
+                    ui.selectable_value(&mut self.admin_tab, AdminTab::Manual, "手動発報");
                     ui.selectable_value(&mut self.admin_tab, AdminTab::SystemStatus, "受信機状態");
                     ui.selectable_value(&mut self.admin_tab, AdminTab::Cwsd, "同報系I/F");
                 }
@@ -34,13 +35,14 @@ impl App {
         });
 
         // Guard operator-only screens if the role changed.
-        if matches!(self.admin_tab, AdminTab::SystemStatus | AdminTab::Cwsd) && !operator {
+        if matches!(self.admin_tab, AdminTab::SystemStatus | AdminTab::Cwsd | AdminTab::Manual) && !operator {
             self.admin_tab = AdminTab::Top;
         }
 
         match self.admin_tab {
             AdminTab::Top => self.show_top(ctx),
             AdminTab::VirtualPanel => self.show_virtual_panel(ctx),
+            AdminTab::Manual => self.show_manual(ctx),
             AdminTab::SystemStatus => self.show_system_status(ctx),
             AdminTab::Alerts => self.show_alerts(ctx),
             AdminTab::Rules => self.show_rules(ctx),
@@ -219,6 +221,144 @@ impl App {
                 ui.weak("※ 接点出力・外部I/F の実ハードは本移植版にはありません。");
             });
         });
+    }
+
+    // ---- 手動発報 ----
+    fn show_manual(&mut self, ctx: &egui::Context) {
+        // (表示名, 情報種別, 電文種別)
+        const CATS: &[(&str, Category, AlertType)] = &[
+            ("国民保護情報", Category::CivilProtection, AlertType::Jalt),
+            ("緊急連絡", Category::EmergencyContact, AlertType::Ifda),
+            ("緊急地震速報", Category::Eew, AlertType::Eprq),
+            ("地震情報", Category::Earthquake, AlertType::Ioeq),
+            ("震度速報", Category::SeismicIntensity, AlertType::Ioeq),
+            ("津波情報", Category::Tsunami, AlertType::Issw),
+            ("火山情報", Category::Volcano, AlertType::Volc),
+            ("気象情報", Category::Weather, AlertType::Wrma),
+        ];
+        let prefs = super::areas::PREFS;
+        if self.man_pref >= prefs.len() {
+            self.man_pref = 0;
+        }
+        if self.man_city > prefs[self.man_pref].cities.len() {
+            self.man_city = 0;
+        }
+
+        let active: Vec<String> = {
+            let st = self.state.lock().unwrap();
+            st.alerts()
+                .iter()
+                .map(|c| format!("{}　{}", c.category.label(), c.area_label()))
+                .collect()
+        };
+
+        let mut fire: Option<(AlertType, Category, String, String)> = None;
+        let mut clear = false;
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                ui.add_space(8.0);
+                ui.heading("手動発報");
+                ui.weak("情報種別と地域（都道府県・市区町村）を選び、画面に緊急情報を発報します（試験・訓練用）。");
+                ui.add_space(10.0);
+
+                card(ui, "発報内容", |ui| {
+                    let cur = CATS
+                        .iter()
+                        .find(|(_, c, _)| *c == self.man_category)
+                        .map(|(l, _, _)| *l)
+                        .unwrap_or("国民保護情報");
+                    egui::Grid::new("manual_grid").num_columns(2).spacing([12.0, 10.0]).show(ui, |ui| {
+                        ui.label("情報種別");
+                        egui::ComboBox::from_id_salt("man_cat").selected_text(cur).width(220.0).show_ui(ui, |ui| {
+                            for (label, cat, _) in CATS {
+                                ui.selectable_value(&mut self.man_category, *cat, *label);
+                            }
+                        });
+                        ui.end_row();
+
+                        ui.label("都道府県");
+                        let pref_resp = egui::ComboBox::from_id_salt("man_pref")
+                            .selected_text(prefs[self.man_pref].name)
+                            .width(220.0)
+                            .show_ui(ui, |ui| {
+                                let mut changed = false;
+                                for (i, p) in prefs.iter().enumerate() {
+                                    if ui.selectable_value(&mut self.man_pref, i, p.name).changed() {
+                                        changed = true;
+                                    }
+                                }
+                                changed
+                            });
+                        if pref_resp.inner == Some(true) {
+                            self.man_city = 0; // 都道府県が変わったら市区町村をリセット
+                        }
+                        ui.end_row();
+
+                        ui.label("市区町村");
+                        let cities = prefs[self.man_pref].cities;
+                        let city_text = if self.man_city == 0 {
+                            "（都道府県全体）"
+                        } else {
+                            cities[self.man_city - 1].1
+                        };
+                        egui::ComboBox::from_id_salt("man_city").selected_text(city_text).width(220.0).show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.man_city, 0, "（都道府県全体）");
+                            for (i, c) in cities.iter().enumerate() {
+                                ui.selectable_value(&mut self.man_city, i + 1, c.1);
+                            }
+                        });
+                        ui.end_row();
+
+                        ui.label("見出し/本文");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.man_headline)
+                                .desired_width(280.0)
+                                .hint_text("例: 大津波警報 / 噴火警戒レベル5 / 弾道ミサイル発射情報"),
+                        );
+                        ui.end_row();
+                    });
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        if ui.add(egui::Button::new(RichText::new("発報").strong()).min_size(egui::vec2(96.0, 30.0))).clicked() {
+                            let pref = &prefs[self.man_pref];
+                            let cities = pref.cities;
+                            let area = if self.man_city == 0 {
+                                pref.name.to_string()
+                            } else {
+                                format!("{} {}", pref.name, cities[self.man_city - 1].1)
+                            };
+                            if let Some((_, cat, at)) = CATS.iter().find(|(_, c, _)| *c == self.man_category) {
+                                fire = Some((*at, *cat, area, self.man_headline.clone()));
+                            }
+                        }
+                        if ui.add(egui::Button::new("全解除").min_size(egui::vec2(96.0, 30.0))).clicked() {
+                            clear = true;
+                        }
+                    });
+                    ui.weak("※ 発報すると表示画面にアラートが出ます。確認(ACK)や「全解除」で復帰します。");
+                });
+
+                ui.add_space(8.0);
+                card(ui, "発報中の緊急情報", |ui| {
+                    if active.is_empty() {
+                        ui.weak("なし");
+                    } else {
+                        for a in &active {
+                            ui.label(format!("・{a}"));
+                        }
+                    }
+                });
+            });
+        });
+
+        if let Some((at, cat, area, head)) = fire {
+            self.state.lock().unwrap().inject_manual(at, cat, area, String::new(), head);
+        }
+        if clear {
+            self.state.lock().unwrap().clear_alerts();
+            self.acked = None;
+        }
     }
 
     // ---- システム状態 ----
