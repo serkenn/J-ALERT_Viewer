@@ -22,8 +22,9 @@ impl App {
                 ui.selectable_value(&mut self.admin_tab, AdminTab::Top, "トップ");
                 ui.selectable_value(&mut self.admin_tab, AdminTab::VirtualPanel, "仮想パネル");
                 ui.selectable_value(&mut self.admin_tab, AdminTab::Alerts, "緊急情報一覧");
-                // 受信機状態 / 同報系I/F / 手動発報 は運用管理者以上のみ（operator_required）
+                // 受信機状態 / 同報系I/F / 受信情報設定 / 手動発報 は運用管理者以上のみ
                 if operator {
+                    ui.selectable_value(&mut self.admin_tab, AdminTab::DisplayConfig, "受信情報設定");
                     ui.selectable_value(&mut self.admin_tab, AdminTab::Manual, "手動発報");
                     ui.selectable_value(&mut self.admin_tab, AdminTab::SystemStatus, "受信機状態");
                     ui.selectable_value(&mut self.admin_tab, AdminTab::Cwsd, "同報系I/F");
@@ -35,13 +36,18 @@ impl App {
         });
 
         // Guard operator-only screens if the role changed.
-        if matches!(self.admin_tab, AdminTab::SystemStatus | AdminTab::Cwsd | AdminTab::Manual) && !operator {
+        if matches!(
+            self.admin_tab,
+            AdminTab::SystemStatus | AdminTab::Cwsd | AdminTab::Manual | AdminTab::DisplayConfig
+        ) && !operator
+        {
             self.admin_tab = AdminTab::Top;
         }
 
         match self.admin_tab {
             AdminTab::Top => self.show_top(ctx),
             AdminTab::VirtualPanel => self.show_virtual_panel(ctx),
+            AdminTab::DisplayConfig => self.show_display_config(ctx),
             AdminTab::Manual => self.show_manual(ctx),
             AdminTab::SystemStatus => self.show_system_status(ctx),
             AdminTab::Alerts => self.show_alerts(ctx),
@@ -221,6 +227,83 @@ impl App {
                 ui.weak("※ 接点出力・外部I/F の実ハードは本移植版にはありません。");
             });
         });
+    }
+
+    // ---- 受信情報設定（取捨選択）----
+    fn show_display_config(&mut self, ctx: &egui::Context) {
+        let prefs = super::areas::PREFS;
+        let mut st = self.state.lock().unwrap();
+        let mut dirty = false;
+        let (shown, total) = (
+            st.alerts().len() + st.advisories().len(),
+            st.inbox().filter(|i| i.severity >= Severity::Advisory).count(),
+        );
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                ui.add_space(8.0);
+                ui.heading("受信情報設定（表示の取捨選択）");
+                ui.weak("受信は全件行います。ここで選んだ情報種別・地域だけを表示画面に出します。対象外も「緊急情報一覧」には記録されます。");
+                ui.add_space(10.0);
+
+                card(ui, "表示する情報種別", |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        for r in &mut st.rules {
+                            if ui.checkbox(&mut r.display, r.category.label()).changed() {
+                                dirty = true;
+                            }
+                        }
+                    });
+                });
+
+                ui.add_space(8.0);
+                card(ui, "表示する地域", |ui| {
+                    if ui.radio_value(&mut st.display_all_areas, true, "全国（すべて表示）").changed() {
+                        dirty = true;
+                    }
+                    if ui.radio_value(&mut st.display_all_areas, false, "指定した都道府県のみ表示").changed() {
+                        dirty = true;
+                    }
+                    if !st.display_all_areas {
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("全選択").clicked() {
+                                st.display_areas = prefs.iter().map(|p| p.name.to_string()).collect();
+                                dirty = true;
+                            }
+                            if ui.button("全解除").clicked() {
+                                st.display_areas.clear();
+                                dirty = true;
+                            }
+                            ui.weak(format!("{} 都道府県を選択中", st.display_areas.len()));
+                        });
+                        ui.add_space(4.0);
+                        egui::ScrollArea::vertical().max_height(300.0).auto_shrink([false, false]).show(ui, |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                for p in prefs {
+                                    let mut on = st.display_areas.iter().any(|a| a == p.name);
+                                    if ui.checkbox(&mut on, p.name).changed() {
+                                        if on {
+                                            st.display_areas.push(p.name.to_string());
+                                        } else {
+                                            st.display_areas.retain(|a| a != p.name);
+                                        }
+                                        dirty = true;
+                                    }
+                                }
+                            });
+                        });
+                    }
+                });
+
+                ui.add_space(8.0);
+                ui.weak(format!("現在の表示対象: {shown} 件 / 注意報級以上の受信 {total} 件"));
+            });
+        });
+
+        if dirty {
+            st.reapply_display();
+        }
     }
 
     // ---- 手動発報 ----

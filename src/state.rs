@@ -77,6 +77,10 @@ pub struct AppState {
     /// Standby style the public web display should use ("simple" | "pachimon" |
     /// "real"), chosen from the desktop settings.
     pub web_standby: String,
+    /// 受信情報設定（地域の限定受信）: when `display_all_areas` is false, only
+    /// telegrams whose area matches one of `display_areas` (都道府県名) are shown.
+    pub display_all_areas: bool,
+    pub display_areas: Vec<String>,
 }
 
 impl Default for AppState {
@@ -93,6 +97,8 @@ impl Default for AppState {
             last_terr_ms: 0,
             type_counts: HashMap::new(),
             web_standby: "pachimon".to_string(),
+            display_all_areas: true,
+            display_areas: Vec::new(),
         }
     }
 }
@@ -136,6 +142,16 @@ impl AppState {
         self.rules.iter().find(|r| r.category == category)
     }
 
+    /// 受信情報設定（地域）: does this telegram's area fall within the configured
+    /// display target? With 全国 (or no selection) everything matches.
+    fn area_allowed(&self, ch: &AlertChannel) -> bool {
+        if self.display_all_areas || self.display_areas.is_empty() {
+            return true;
+        }
+        let hay = format!("{} {} {} {}", ch.area_name, ch.head_title, ch.title, ch.areas.join(" "));
+        self.display_areas.iter().any(|a| hay.contains(a.as_str()))
+    }
+
     /// Apply one decoded line: record it in the mailbox and update the channels.
     pub fn ingest(&mut self, mut ch: AlertChannel) {
         self.receiver.last_line_ms = Utc::now().timestamp_millis();
@@ -147,8 +163,8 @@ impl AppState {
             RxChannel::Unknown => {}
         }
 
-        // The 緊急情報表示設定 (rule.display) decides whether it reaches the screen.
-        ch.allowed = self.rule_for(ch.category).map_or(true, |r| r.display);
+        // 緊急情報表示設定（種別 rule.display）×受信情報設定（地域）の取捨選択。
+        ch.allowed = self.rule_for(ch.category).map_or(true, |r| r.display) && self.area_allowed(&ch);
 
         self.record_history(&ch);
 
@@ -347,9 +363,28 @@ impl AppState {
         self.ingest(ch);
     }
 
-    /// Clear all live alert channels (手動発報の全解除). History is kept.
+    /// Clear all live alert channels (全解除). History is kept.
     pub fn clear_alerts(&mut self) {
         self.channels.clear();
+    }
+
+    /// Recompute `allowed` for the live channels after the 受信情報設定
+    /// (種別・地域の取捨選択) changes, so the kiosk reflects the new filter
+    /// without waiting for the next telegram.
+    pub fn reapply_display(&mut self) {
+        let updates: Vec<(String, bool)> = self
+            .channels
+            .values()
+            .map(|c| {
+                let allowed = self.rule_for(c.category).map_or(true, |r| r.display) && self.area_allowed(c);
+                (c.key.clone(), allowed)
+            })
+            .collect();
+        for (k, a) in updates {
+            if let Some(c) = self.channels.get_mut(&k) {
+                c.allowed = a;
+            }
+        }
     }
 
     /// Run a (simulated) 接続テスト. There is no real WAN/satellite uplink in
@@ -418,6 +453,25 @@ mod tests {
         st.ingest(from_json_line(&line("東京都", "大雨警報", "発表")).unwrap());
         assert_eq!(st.mode(), "standby"); // logged but not shown
         assert_eq!(st.inbox().count(), 1);
+    }
+
+    #[test]
+    fn area_filter_hides_non_target_then_reapply_reveals() {
+        let mut st = AppState::new("test".into());
+        st.ingest(from_json_line(&line("東京都", "大雨警報", "発表")).unwrap());
+        assert_eq!(st.mode(), "alert");
+
+        // 受信情報設定で大阪府のみ表示に絞ると、受信済みの東京都は表示対象外になる。
+        st.display_all_areas = false;
+        st.display_areas = vec!["大阪府".into()];
+        st.reapply_display();
+        assert_eq!(st.mode(), "standby");
+        assert_eq!(st.inbox().count(), 1); // 受信履歴には残る
+
+        // 対象地域を東京都に切り替えれば、次の電文を待たず表示に戻る。
+        st.display_areas = vec!["東京都".into()];
+        st.reapply_display();
+        assert_eq!(st.mode(), "alert");
     }
 
     #[test]

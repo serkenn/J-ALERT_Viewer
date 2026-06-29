@@ -38,6 +38,7 @@ pub enum View {
 pub enum AdminTab {
     Top,
     VirtualPanel,
+    DisplayConfig,
     Manual,
     SystemStatus,
     Alerts,
