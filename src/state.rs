@@ -74,6 +74,9 @@ pub struct AppState {
     pub last_sat_ms: i64,
     pub last_terr_ms: i64,
     type_counts: HashMap<&'static str, u64>,
+    /// Standby style the public web display should use ("simple" | "pachimon" |
+    /// "real"), chosen from the desktop settings.
+    pub web_standby: String,
 }
 
 impl Default for AppState {
@@ -89,6 +92,7 @@ impl Default for AppState {
             last_sat_ms: 0,
             last_terr_ms: 0,
             type_counts: HashMap::new(),
+            web_standby: "pachimon".to_string(),
         }
     }
 }

@@ -104,6 +104,7 @@ pub struct App {
     pub theme: ThemePref,
     pub fullscreen: bool,
     pub standby_style: StandbyStyle,
+    pub web_standby: StandbyStyle,
     // management screen
     pub admin_tab: AdminTab,
     pub logged_in: bool,
@@ -167,6 +168,7 @@ impl App {
             theme: ThemePref::System,
             fullscreen,
             standby_style: StandbyStyle::Simple,
+            web_standby: StandbyStyle::Pachimon,
             admin_tab: AdminTab::Top,
             logged_in: false,
             current_role: Role::User,
@@ -399,6 +401,18 @@ impl App {
                 });
 
                 ui.separator();
+                ui.label(egui::RichText::new("Web 表示スタイル（公開ページ /）").strong());
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.web_standby, StandbyStyle::Simple, "シンプル");
+                    ui.selectable_value(&mut self.web_standby, StandbyStyle::Pachimon, "パチモン");
+                    ui.selectable_value(&mut self.web_standby, StandbyStyle::Real, "リアル");
+                });
+                ui.weak("ブラウザ表示（/）の待機スタイル。デスクトップとは個別に選べます。");
+                // Push the choice into shared state so the web page can read it.
+                self.state.lock().unwrap().web_standby = web_style_str(self.web_standby).to_string();
+
+                ui.separator();
                 ui.label(egui::RichText::new("音声").strong());
                 ui.add_space(4.0);
                 ui.checkbox(&mut self.sound_on, "アラート時にチャイム・読み上げを再生する");
@@ -454,6 +468,15 @@ impl App {
 }
 
 // ---- shared helpers ----
+
+/// String tag the web page uses for a standby style.
+fn web_style_str(s: StandbyStyle) -> &'static str {
+    match s {
+        StandbyStyle::Simple => "simple",
+        StandbyStyle::Pachimon => "pachimon",
+        StandbyStyle::Real => "real",
+    }
+}
 
 pub fn sev_color(s: Severity) -> Color32 {
     match s {

@@ -11,6 +11,8 @@ use std::thread::JoinHandle;
 
 const ADMIN_HTML: &str = include_str!("../wwwroot/admin.html");
 const INDEX_HTML: &str = include_str!("../wwwroot/index.html");
+/// Real standby artwork, served to the web kiosk for the「リアル」style.
+const STANDBY_JPG: &[u8] = include_bytes!("../assets/screen/standby.jpg");
 
 /// A running web server; can be stopped at runtime (used by the settings UI).
 pub struct WebHandle {
@@ -72,6 +74,7 @@ fn route(
     match path {
         "/" => html(INDEX_HTML),        // public J-ALERT display
         "/admin" | "/inbox" => html(ADMIN_HTML), // management (緊急情報一覧)
+        "/assets/standby.jpg" => with_type(STANDBY_JPG.to_vec(), "image/jpeg"),
         "/healthz" => text("ok"),
         "/api/state" => json(state_json(&state.lock().unwrap())),
         "/api/xml" => {
@@ -104,6 +107,7 @@ fn state_json(st: &AppState) -> serde_json::Value {
     let advisories: Vec<serde_json::Value> = st.advisories().iter().map(|c| channel_json(c)).collect();
     serde_json::json!({
         "mode": st.mode(),
+        "standbyStyle": st.web_standby,
         "topSeverity": sev_num(st.top_severity()),
         "primary": st.primary().map(channel_json),
         "alerts": alerts,

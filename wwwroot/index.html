@@ -12,9 +12,17 @@
     background:#000;color:#fff;overflow:hidden;user-select:none}
   #app{position:fixed;inset:0}
 
-  /* ===== standby (jars2000 homage) ===== */
+  /* ===== standby (3 styles, switched by data-style) ===== */
   #standby{position:absolute;inset:0;background:#000;overflow:hidden}
-  #standby .stars{position:absolute;inset:0;
+  #standby .sb{position:absolute;inset:0;display:none}
+  #standby[data-style="pachimon"] .sb-pachimon{display:block}
+  #standby[data-style="simple"]   .sb-simple{display:flex}
+  #standby[data-style="real"]     .sb-real{display:flex}
+  /* hide overlapping "異常なし"-type text while the bottom banner is shown */
+  #standby.adv .health{display:none}
+
+  /* -- pachimon (J-ALERT homage) -- */
+  .sb-pachimon .stars{position:absolute;inset:0;
     background-image:
       radial-gradient(1px 1px at 20% 15%,#fff,transparent),
       radial-gradient(1px 1px at 70% 25%,#cfe,transparent),
@@ -25,24 +33,44 @@
       radial-gradient(1px 1px at 90% 45%,#fff,transparent),
       radial-gradient(1px 1px at 33% 20%,#fff,transparent);
     opacity:.85}
-  #standby .earth{position:absolute;left:50%;bottom:-62vw;transform:translateX(-50%);
+  .sb-pachimon .earth{position:absolute;left:50%;bottom:-62vw;transform:translateX(-50%);
     width:124vw;height:124vw;border-radius:50%;
     background:radial-gradient(circle at 42% 30%,#15466e 0%,#0a2c4c 38%,#071a33 60%,#04101f 100%);
     box-shadow:0 0 60px 8px rgba(54,143,224,.35),inset 0 0 120px rgba(0,0,0,.6)}
-  #standby .earth::after{content:"";position:absolute;inset:-4px;border-radius:50%;
+  .sb-pachimon .earth::after{content:"";position:absolute;inset:-4px;border-radius:50%;
     border:3px solid rgba(54,143,224,.55);filter:blur(1px)}
-  #standby .logo{position:absolute;top:13%;left:0;right:0;text-align:center;
+  .sb-pachimon .logo{position:absolute;top:13%;left:0;right:0;text-align:center;
     font-size:13vh;font-weight:800;font-style:italic;letter-spacing:.06em;
     color:#ff2a1f;text-shadow:0 0 18px rgba(255,42,31,.55),0 3px 0 #6a0d0a}
-  #standby .cats{position:absolute;top:34%;left:11%;display:flex;flex-direction:column;gap:1.1em}
-  #standby .cats div{display:flex;align-items:center;gap:.5em;font-size:4.6vh;font-weight:600;color:#e9eef6}
-  #standby .cats div::before{content:"";width:.62em;height:.62em;background:#e9eef6;display:inline-block}
-  #standby .cats div.lit::before{background:#ff3a2a;box-shadow:0 0 12px #ff3a2a}
-  #standby .cats div.lit{color:#ffd5d0}
-  #standby .clock{position:absolute;top:5%;right:4%;text-align:right}
-  #standby .clock .t{font-size:6vh;font-variant-numeric:tabular-nums;color:#dfe7ff}
-  #standby .clock .d{font-size:3vh;color:#9dabcf}
-  #standby .health{position:absolute;bottom:5%;left:4%;font-size:2.8vh;color:#35d986}
+  .sb-pachimon .cats{position:absolute;top:34%;left:11%;display:flex;flex-direction:column;gap:1.1em}
+  .sb-pachimon .cats div{display:flex;align-items:center;gap:.5em;font-size:4.6vh;font-weight:600;color:#e9eef6}
+  .sb-pachimon .cats div::before{content:"";width:.62em;height:.62em;background:#e9eef6;display:inline-block}
+  .sb-pachimon .cats div.lit::before{background:#ff3a2a;box-shadow:0 0 12px #ff3a2a}
+  .sb-pachimon .cats div.lit{color:#ffd5d0}
+  .sb-pachimon .clock{position:absolute;top:5%;right:4%;text-align:right}
+  .sb-pachimon .clock .clk{font-size:6vh;font-variant-numeric:tabular-nums;color:#dfe7ff}
+  .sb-pachimon .clock .dat{font-size:3vh;color:#9dabcf}
+  .sb-pachimon .health{position:absolute;bottom:5%;left:4%;font-size:2.8vh;color:#35d986}
+
+  /* -- simple (clock) -- */
+  .sb-simple{flex-direction:column;align-items:center;justify-content:center;background:#0a1020}
+  .sb-simple .wait{font-size:3.4vh;color:#7e8db5;letter-spacing:.35em;margin-bottom:1.4vh}
+  .sb-simple .clk{font-size:18vh;line-height:1;color:#e8eefc;font-variant-numeric:tabular-nums}
+  .sb-simple .dat{font-size:4.5vh;color:#aab6dd;margin-top:1vh}
+  .sb-simple .status{font-size:3vh;margin-top:3.4vh;color:#27d07a}
+
+  /* -- real (genuine standby image) -- */
+  .sb-real{align-items:center;justify-content:center;background:#000}
+  .sb-real .frame{position:relative;height:100%;aspect-ratio:1024/668;max-width:100%}
+  .sb-real .frame img{width:100%;height:100%;display:block}
+  .sb-real .lamp{position:absolute;left:5.4%;width:3.2%;aspect-ratio:1;background:#ff2a1f;
+    box-shadow:0 0 12px #ff2a1f;display:none}
+  .sb-real .lamp.on{display:block}
+  .sb-real .lamp.l1{top:21.4%} .sb-real .lamp.l2{top:29.9%}
+  .sb-real .lamp.l3{top:38.4%} .sb-real .lamp.l4{top:46.9%}
+  .sb-real .rclock{position:absolute;top:3%;right:3%;text-align:right}
+  .sb-real .rclock .clk{font-size:5vh;font-variant-numeric:tabular-nums;color:#dfe7ff}
+  .sb-real .rclock .dat{font-size:2.4vh;color:#9dabcf}
 
   /* ===== alert ===== */
   #alert{position:absolute;inset:0;display:none;flex-direction:column;color:#fff}
@@ -67,6 +95,11 @@
   #alert .areas{margin-top:2vh;font-size:2.6vh;color:rgba(255,255,255,.85)}
   #alert .foot{display:flex;gap:3vw;padding:2vh 4vw;background:rgba(0,0,0,.34);font-size:2.6vh}
   #alert .foot .sp{flex:1}
+  /* ACK button over the alert */
+  #ackbtn{position:absolute;top:3vh;right:3vw;z-index:4;display:none;
+    font:700 3vh/1 inherit;color:#fff;background:rgba(16,16,20,.92);
+    border:2px solid #fff;border-radius:10px;padding:1.4vh 2vw;cursor:pointer}
+  #alert.on ~ #ackbtn{display:block}
 
   .advbar{position:absolute;left:0;right:0;bottom:0;background:var(--advisory);color:#111;
     display:none;align-items:center;gap:2vw;padding:1.6vh 2vw;font-weight:700;font-size:2.6vh;z-index:3;overflow:hidden}
@@ -80,13 +113,34 @@
 </head>
 <body>
 <div id="app">
-  <section id="standby">
-    <div class="stars"></div>
-    <div class="earth"></div>
-    <div class="logo">J-ALERT</div>
-    <div class="cats"><div data-grp="国民保護">国民保護に関する情報</div><div data-grp="地震">地震情報</div><div data-grp="津波">津波情報</div><div data-grp="火山">火山情報</div></div>
-    <div class="clock"><div class="t" id="clk">--:--:--</div><div class="d" id="dat"></div></div>
-    <div class="health">● 受信待機中 / 異常なし</div>
+  <section id="standby" data-style="pachimon">
+    <!-- パチモン -->
+    <div class="sb sb-pachimon">
+      <div class="stars"></div>
+      <div class="earth"></div>
+      <div class="logo">J-ALERT</div>
+      <div class="cats"><div data-grp="国民保護">国民保護に関する情報</div><div data-grp="地震">地震情報</div><div data-grp="津波">津波情報</div><div data-grp="火山">火山情報</div></div>
+      <div class="clock"><div class="clk">--:--:--</div><div class="dat"></div></div>
+      <div class="health">● 受信待機中 / 異常なし</div>
+    </div>
+    <!-- シンプル -->
+    <div class="sb sb-simple">
+      <div class="wait">受 信 待 機 中</div>
+      <div class="clk">--:--:--</div>
+      <div class="dat"></div>
+      <div class="status" id="simpleStatus">● 異常なし</div>
+    </div>
+    <!-- リアル（実機待機画像） -->
+    <div class="sb sb-real">
+      <div class="frame">
+        <img src="/assets/standby.jpg" alt="J-ALERT 待機画面">
+        <div class="lamp l1" data-grp="国民保護"></div>
+        <div class="lamp l2" data-grp="地震"></div>
+        <div class="lamp l3" data-grp="津波"></div>
+        <div class="lamp l4" data-grp="火山"></div>
+        <div class="rclock"><div class="clk"></div><div class="dat"></div></div>
+      </div>
+    </div>
   </section>
 
   <section id="alert">
@@ -102,6 +156,7 @@
     </div>
     <div class="foot"><span id="rt"></span><span class="sp"></span><span id="rx"></span></div>
   </section>
+  <button id="ackbtn" type="button">確認 (ACK)</button>
 
   <div class="advbar" id="adv"><span class="tag">注意・情報</span><div class="track"><span id="advtxt"></span></div></div>
 </div>
@@ -111,8 +166,13 @@ const $=s=>document.querySelector(s);
 const SEV={2:"warning",3:"emergency"}, LBL={2:"警報",3:"特別警報"};
 const WK=["日","月","火","水","木","金","土"];
 function pad(n){return String(n).padStart(2,"0");}
-function tick(){const d=new Date();$("#clk").textContent=`${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  $("#dat").textContent=`${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日(${WK[d.getDay()]})`;}
+function tick(){
+  const d=new Date();
+  const t=`${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const dd=`${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日(${WK[d.getDay()]})`;
+  document.querySelectorAll("#standby .clk").forEach(e=>e.textContent=t);
+  document.querySelectorAll("#standby .dat").forEach(e=>e.textContent=dd);
+}
 setInterval(tick,250);tick();
 function hms(ms){if(!ms)return"—";const d=new Date(ms);return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;}
 function rep(iso){if(!iso)return"—";const d=new Date(iso);return isNaN(d)?iso:`${d.getMonth()+1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;}
@@ -127,25 +187,47 @@ function grpOf(cat){
   return null;
 }
 
+// ACK: which alert key the viewer has acknowledged (client-side, like the desktop)
+let ackedKey=null;
+function alertKey(p){ return p ? `${p.category}|${p.areaName||p.headTitle}|${p.severity}|${p.infoType}` : ""; }
+
 function render(s){
-  const alertOn = s.mode==="alert" && s.primary;
+  const sb=$("#standby");
+  sb.dataset.style = s.standbyStyle || "pachimon";
+
+  const primary=s.primary;
+  const key=alertKey(primary);
+  const isAlert = s.mode==="alert" && primary;
+  if(!isAlert) ackedKey=null;                 // nothing in force → reset ACK
+  const alertOn = isAlert && ackedKey!==key;  // acknowledged alerts drop back to standby
+
   $("#alert").classList.toggle("on",!!alertOn);
-  $("#standby").style.display = alertOn ? "none":"block";
+  $("#ackbtn").style.display = alertOn ? "block":"none";
+  sb.style.display = alertOn ? "none":"block";
 
   // light the standby category lamps for anything currently active
   const lit=new Set();
   for(const a of (s.alerts||[]).concat(s.advisories||[])){ const g=grpOf(a.category); if(g) lit.add(g); }
-  document.querySelectorAll("#standby .cats div").forEach(d=>d.classList.toggle("lit",lit.has(d.dataset.grp)));
+  document.querySelectorAll("#standby .cats div, #standby .lamp").forEach(d=>{
+    const on=lit.has(d.dataset.grp);
+    d.classList.toggle("lit",on);   // pachimon cats
+    d.classList.toggle("on",on);    // real lamps
+  });
 
-  // advisory banner (when not full alert)
+  // advisory banner + hide contradictory "異常なし"
+  const advList=s.advisories||[];
+  const advShown = !alertOn && advList.length>0;
   const adv=$("#adv");
-  if(!alertOn && (s.advisories||[]).length){
-    $("#advtxt").textContent=s.advisories.map(a=>`【${a.areaName}】`+((a.kinds||[]).join("・")||a.category||"")).join("　／　");
+  if(advShown){
+    $("#advtxt").textContent=advList.map(a=>`【${a.areaName}】`+((a.kinds||[]).join("・")||a.category||"")).join("　／　");
     adv.classList.add("on");
   } else adv.classList.remove("on");
+  sb.classList.toggle("adv", advShown);
+  const ss=$("#simpleStatus");
+  if(ss){ ss.textContent = advShown ? "● 注意・情報を受信中" : "● 異常なし"; ss.style.color = advShown ? "#f2c200" : "#27d07a"; }
 
   if(alertOn){
-    const p=s.primary, sev=SEV[p.severity]||"warning";
+    const p=primary, sev=SEV[p.severity]||"warning";
     const al=$("#alert"); al.classList.remove("warning","emergency"); al.classList.add(sev);
     $("#sev").textContent = p.category==="気象情報" ? (LBL[p.severity]||"警報") : (p.category||LBL[p.severity]||"警報");
     $("#area").textContent=p.areaName||p.headTitle||"";
@@ -157,8 +239,10 @@ function render(s){
     $("#areas").textContent=sub.length?`対象地域　${sub.join("　")}`:"";
     $("#rt").textContent=`発表時刻 ${rep(p.reportTime)}`;
     $("#rx").textContent=`受信 ${hms(p.rxTimeMs)}`;
+    $("#ackbtn").dataset.key=key;
   }
 }
+$("#ackbtn").onclick=()=>{ ackedKey=$("#ackbtn").dataset.key||null; };
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
 
 async function poll(){ try{ render(await (await fetch("/api/state",{cache:"no-store"})).json()); }catch(_){} }

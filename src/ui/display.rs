@@ -148,7 +148,13 @@ impl App {
                     ui.label(RichText::new(now.format("%H:%M:%S").to_string()).font(FontId::proportional(h * 0.18)).color(Color32::from_rgb(0xe8, 0xee, 0xfc)));
                     ui.label(RichText::new(now.format("%Y年%-m月%-d日").to_string()).size(h * 0.045).color(Color32::from_rgb(0xaa, 0xb6, 0xdd)));
                     ui.add_space(h * 0.04);
-                    ui.label(RichText::new("● 異常なし").size(h * 0.03).color(Color32::from_rgb(0x27, 0xd0, 0x7a)));
+                    // Hide the "異常なし" line when a 注意・情報 banner is up (avoids the
+                    // contradictory text showing behind/above the banner).
+                    if advisories.is_empty() {
+                        ui.label(RichText::new("● 異常なし").size(h * 0.03).color(Color32::from_rgb(0x27, 0xd0, 0x7a)));
+                    } else {
+                        ui.label(RichText::new("● 注意・情報を受信中").size(h * 0.03).color(Color32::from_rgb(0xf2, 0xc2, 0x00)));
+                    }
                 });
                 advisory_banner(ui, ui.max_rect(), advisories);
             });
@@ -220,13 +226,17 @@ impl App {
                 );
 
                 // --- standby / health line (bottom-left) ---
-                p.text(
-                    egui::pos2(rect.left() + w * 0.04, rect.bottom() - h * 0.06),
-                    Align2_LEFT_CENTER(),
-                    "● 受信待機中 / 異常なし",
-                    FontId::proportional(h * 0.028),
-                    Color32::from_rgb(0x35, 0xd9, 0x86),
-                );
+                // Suppressed when a 注意・情報 banner occupies the bottom (otherwise
+                // "受信待機中 / 異常なし" would show through behind the banner).
+                if advisories.is_empty() {
+                    p.text(
+                        egui::pos2(rect.left() + w * 0.04, rect.bottom() - h * 0.06),
+                        Align2_LEFT_CENTER(),
+                        "● 受信待機中 / 異常なし",
+                        FontId::proportional(h * 0.028),
+                        Color32::from_rgb(0x35, 0xd9, 0x86),
+                    );
+                }
 
                 advisory_banner(ui, rect, advisories);
             });
