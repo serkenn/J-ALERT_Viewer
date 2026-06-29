@@ -12,6 +12,7 @@ struct AlertView {
     category: Category,
     type_code: &'static str,
     area: String,
+    sub_type: String,
     info_type: String,
     kinds: Vec<String>,
     headline: String,
@@ -20,6 +21,13 @@ struct AlertView {
     sub_areas: Vec<String>,
     other_count: usize,
     others: Vec<String>,
+}
+
+impl AlertView {
+    /// Text the screen selector matches against to pick the exact background.
+    fn screen_hint(&self) -> String {
+        format!("{} {} {}", self.sub_type, self.headline, self.kinds.join(" "))
+    }
 }
 
 impl AlertView {
@@ -57,6 +65,7 @@ impl App {
                 category: p.category,
                 type_code: p.alert_type.code(),
                 area: p.area_label().to_string(),
+                sub_type: p.sub_type.clone(),
                 info_type: p.info_type.clone(),
                 kinds: p.kinds.iter().map(|k| k.name.clone()).collect(),
                 headline: p.headline.clone(),
@@ -243,10 +252,11 @@ impl App {
     /// dynamic text overlaid on a translucent panel. Weather (no artwork) falls
     /// back to the colour-coded screen.
     fn draw_alert_real(&self, ctx: &egui::Context, p: &AlertView) {
-        let tex = match self.screens.category(p.category) {
-            Some(t) => t,
+        let screen = match self.screens.alert_screen(p.category, &p.screen_hint()) {
+            Some(s) => s,
             None => return self.draw_alert(ctx, p),
         };
+        let tex = screen.tex;
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(Color32::BLACK).inner_margin(egui::Margin::same(0.0)))
             .show(ctx, |ui| {
@@ -273,12 +283,13 @@ impl App {
                         .show(ui, |ui| {
                             ui.set_width(panel.width());
                             let ink = Color32::WHITE;
-                            ui.label(RichText::new(&p.area).font(FontId::proportional(h * 0.07)).strong().color(ink));
+                            ui.label(RichText::new(screen.heading).font(FontId::proportional(h * 0.06)).strong().color(ink));
+                            ui.label(RichText::new(&p.area).font(FontId::proportional(h * 0.065)).strong().color(ink));
                             let mut line = if p.info_type.is_empty() { "発表".to_string() } else { p.info_type.clone() };
                             if p.other_count > 0 {
                                 line = format!("{line}　／　他 {} 件発表中", p.other_count);
                             }
-                            ui.label(RichText::new(format!("{}　{}", p.category.label(), line)).size(h * 0.032).color(ink));
+                            ui.label(RichText::new(format!("{}　{}", p.category.label(), line)).size(h * 0.03).color(ink));
                             if !p.kinds.is_empty() {
                                 ui.add_space(h * 0.01);
                                 ui.label(RichText::new(p.kinds.join("　")).size(h * 0.038).strong().color(ink));
@@ -394,7 +405,8 @@ impl App {
     }
 }
 
-/// Yellow 注意報/情報 banner pinned to the bottom of the standby screen.
+/// Yellow 注意報/情報 banner pinned to the bottom of the standby screen, with the
+/// text scrolling right→left (telop / marquee), like the real receiver.
 fn advisory_banner(ui: &egui::Ui, rect: egui::Rect, advisories: &[String]) {
     if advisories.is_empty() {
         return;
@@ -403,13 +415,23 @@ fn advisory_banner(ui: &egui::Ui, rect: egui::Rect, advisories: &[String]) {
     let bar = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - bar_h), rect.max);
     let p = ui.painter();
     p.rect_filled(bar, 0.0, sev_color(Severity::Advisory));
-    p.text(
-        egui::pos2(bar.left() + 24.0, bar.center().y),
-        Align2_LEFT_CENTER(),
-        format!("注意・情報　{}", advisories.join("　／　")),
-        FontId::proportional((bar_h * 0.4).min(26.0)),
-        Color32::from_rgb(0x1a, 0x1a, 0x1c),
-    );
+
+    let ink = Color32::from_rgb(0x1a, 0x1a, 0x1c);
+    let text = format!("注意・情報　{}　　　", advisories.join("　／　"));
+    let font = FontId::proportional((bar_h * 0.45).min(28.0));
+    let galley = ui.fonts(|f| f.layout_no_wrap(text, font, ink));
+    let tw = galley.size().x;
+    let y = bar.center().y - galley.size().y / 2.0;
+
+    // Scroll one full loop (text width + bar width) at a steady speed.
+    let speed = (bar_h * 4.0).max(120.0) as f64; // px/sec
+    let total = (tw + bar.width()).max(1.0) as f64;
+    let off = (ui.input(|i| i.time) * speed) % total;
+    let x = bar.right() - off as f32;
+
+    let clipped = p.with_clip_rect(bar);
+    clipped.galley(egui::pos2(x, y), galley, ink);
+    ui.ctx().request_repaint(); // keep the marquee animating
 }
 
 /// A simple starfield with an earth limb glowing along the bottom — an homage to

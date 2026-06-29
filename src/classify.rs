@@ -64,6 +64,7 @@ pub fn from_json_line(line: &str) -> Option<AlertChannel> {
         allowed: true, // refined by the display settings in AppState::ingest
         title: s("title"),
         head_title: s("head_title"),
+        sub_type: s("alert_sub_type"),
         info_type: s("info_type"),
         headline: s("headline"),
         report_time: s("report_time"),

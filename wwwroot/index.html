@@ -69,9 +69,13 @@
   #alert .foot .sp{flex:1}
 
   .advbar{position:absolute;left:0;right:0;bottom:0;background:var(--advisory);color:#111;
-    display:none;align-items:center;gap:2vw;padding:1.6vh 2vw;font-weight:700;font-size:2.6vh;z-index:3}
+    display:none;align-items:center;gap:2vw;padding:1.6vh 2vw;font-weight:700;font-size:2.6vh;z-index:3;overflow:hidden}
   .advbar.on{display:flex}
-  .advbar .tag{background:#111;color:var(--advisory);padding:.3vh 1vw;border-radius:5px;font-size:2.4vh}
+  .advbar .tag{background:#111;color:var(--advisory);padding:.3vh 1vw;border-radius:5px;font-size:2.4vh;flex:none}
+  .advbar .track{flex:1;min-width:0;overflow:hidden}
+  .advbar #advtxt{display:inline-block;white-space:nowrap;padding-left:100%;
+    animation:adv-marquee 22s linear infinite}
+  @keyframes adv-marquee{from{transform:translateX(0)} to{transform:translateX(-100%)}}
 </style>
 </head>
 <body>
@@ -99,7 +103,7 @@
     <div class="foot"><span id="rt"></span><span class="sp"></span><span id="rx"></span></div>
   </section>
 
-  <div class="advbar" id="adv"><span class="tag">注意報</span><span id="advtxt"></span></div>
+  <div class="advbar" id="adv"><span class="tag">注意・情報</span><div class="track"><span id="advtxt"></span></div></div>
 </div>
 
 <script>

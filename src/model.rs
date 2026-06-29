@@ -270,6 +270,7 @@ pub struct AlertChannel {
     pub title: String,
     pub head_title: String,
     pub area_name: String,
+    pub sub_type: String,  // raw alert_sub_type text (used to pick the exact screen)
     pub info_type: String, // 発表 / 継続 / 解除 / 訓練
     pub headline: String,
     pub report_time: String,
