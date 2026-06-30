@@ -965,22 +965,69 @@ fn detail_pane(ui: &mut egui::Ui, d: &Detail, show_xml: &mut bool) -> Option<(u6
 
         if *show_xml && !d.xml.is_empty() {
             ui.add_space(10.0);
+            // 実機電文は 1 行の長大な XML で届くので、階層インデントを付けて読める
+            // 形にしてから表示する。
+            let pretty = pretty_xml(&d.xml);
+            ui.horizontal(|ui| {
+                ui.weak(RichText::new("XML原文").size(13.0));
+                if ui.small_button("コピー").clicked() {
+                    ui.ctx().copy_text(pretty.clone());
+                }
+            });
+            ui.add_space(4.0);
             egui::Frame::none()
                 .fill(Color32::from_rgb(0x1a, 0x1a, 0x1c))
                 .rounding(8.0)
                 .inner_margin(egui::Margin::same(12.0))
                 .show(ui, |ui| {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(&d.xml).font(FontId::monospace(12.5)).color(Color32::from_rgb(0xd0, 0xdd, 0xee)),
-                        )
-                        .wrap(),
-                    );
+                    egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, false]).show(ui, |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&pretty)
+                                    .font(FontId::monospace(12.5))
+                                    .color(Color32::from_rgb(0xd0, 0xdd, 0xee)),
+                            )
+                            .wrap(),
+                        );
+                    });
                 });
         }
     });
     let _ = sev_ink; // kept for colour parity with the web tags
     action
+}
+
+/// Lightweight XML indenter for the 原文表示. Real telegrams arrive as a single
+/// line, so we break between adjacent tags and indent by nesting depth. This is
+/// a display aid, not a full serializer — text nodes (which can't contain raw
+/// `<`/`>`) and self-contained elements like `<Name>東京都</Name>` stay on one line.
+fn pretty_xml(raw: &str) -> String {
+    let broken = raw.replace("><", ">\n<");
+    let mut out = String::with_capacity(broken.len() + broken.len() / 8);
+    let mut depth: usize = 0;
+    for line in broken.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let is_close = t.starts_with("</");
+        let is_decl = t.starts_with("<?") || t.starts_with("<!");
+        // Opens a new level only if it's a start tag with no matching close on
+        // the same line and isn't self-closing (`<Area/>`).
+        let opens = t.starts_with('<') && !is_close && !is_decl && !t.ends_with("/>") && !t.contains("</");
+        if is_close {
+            depth = depth.saturating_sub(1);
+        }
+        for _ in 0..depth {
+            out.push_str("  ");
+        }
+        out.push_str(t);
+        out.push('\n');
+        if opens {
+            depth += 1;
+        }
+    }
+    out
 }
 
 fn meta(ui: &mut egui::Ui, label: &str, value: &str) {
