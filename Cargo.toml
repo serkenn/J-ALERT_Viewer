@@ -1,6 +1,6 @@
 [package]
 name = "jalert-receiver"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2021"
 description = "J-ALERT 受信表示機 (SDR# J-Alert プラグイン向け)"
 license = "MIT"

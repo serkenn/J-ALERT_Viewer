@@ -246,11 +246,36 @@ function renderDetail(it){
   void hasXml;
 }
 
+// 実機電文は 1 行の長大 XML で届くので、タグ階層にインデントを付けて読める形に
+// する簡易整形。テキストノードや自己完結要素(<Name>東京都</Name>)は 1 行のまま。
+function prettyXml(raw){
+  let depth=0, out="";
+  for(const line of raw.replace(/></g,">\n<").split("\n")){
+    const t=line.trim();
+    if(!t) continue;
+    const isClose=t.startsWith("</");
+    const isDecl=t.startsWith("<?")||t.startsWith("<!");
+    const opens=t.startsWith("<")&&!isClose&&!isDecl&&!t.endsWith("/>")&&!t.includes("</");
+    if(isClose) depth=Math.max(0,depth-1);
+    out+="  ".repeat(depth)+t+"\n";
+    if(opens) depth++;
+  }
+  return out;
+}
+
 async function loadXml(id){
   const box=$("#xmlBox");
   if(box.classList.contains("show")){ box.classList.remove("show"); return; }
-  box.textContent=await (await fetch(`/api/xml?id=${id}`)).text();
   box.classList.add("show");
+  box.textContent="読み込み中…";
+  try{
+    const res=await fetch(`/api/xml?id=${id}`);
+    if(!res.ok){ box.textContent="（XML原文がありません）"; return; }
+    const raw=(await res.text()).trim();
+    box.textContent=raw?prettyXml(raw):"（XML原文がありません）";
+  }catch(e){
+    box.textContent="（XML原文の取得に失敗しました）";
+  }
 }
 
 function open(id){
