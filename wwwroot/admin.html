@@ -111,6 +111,34 @@
     white-space:pre-wrap;word-break:break-all;max-height:48vh;overflow:auto;display:none}
   .xml.show{display:block}
 
+  /* XMLツリービューア */
+  .xtree{background:#15171c;border:1px solid #2a2e38;border-radius:8px;padding:14px 16px;
+    font-family:ui-monospace,"SFMono-Regular",Consolas,monospace;font-size:12.5px;line-height:1.7;
+    max-height:52vh;overflow:auto;display:none;margin-top:4px}
+  .xtree.show{display:block}
+  .xtree .xchildren{padding-left:16px;border-left:1px dotted #333843}
+  .xline{white-space:pre-wrap;word-break:break-word}
+  .xtoggle{display:inline-block;width:1.1em;color:#7f8a9c;cursor:pointer;user-select:none}
+  .xspacer{display:inline-block;width:1.1em}
+  .xtag{color:#7cc7ff}
+  .xattr{color:#c3a3ff}
+  .xval{color:#9fe0a0}
+  .xtext{color:#f0d79a}
+  .xpunct{color:#6b7280}
+  .xnode.collapsed>.xchildren,.xnode.collapsed>.xclose{display:none}
+  .xnode.collapsed>.xline .xellipsis{display:inline}
+  .xellipsis{display:none;color:#6b7280;padding:0 4px}
+
+  /* 地震マップ */
+  .mapwrap{display:none;margin-top:4px;background:#12141a;border:1px solid #2a2e38;border-radius:8px;padding:14px}
+  .mapwrap.show{display:block}
+  .mapinfo{color:#cfd3da;font-size:13px;margin:0 0 10px;display:flex;gap:8px 20px;flex-wrap:wrap}
+  .mapinfo b{color:#fff;font-weight:600}
+  .mapsvg{width:100%;height:auto;display:block;background:#0c0e13;border-radius:6px}
+  .maplegend{display:flex;flex-wrap:wrap;gap:6px 8px;margin-top:10px}
+  .lgchip{font-size:11px;padding:2px 8px;border-radius:4px;font-weight:700}
+  .mapmsg{color:#aab;font-size:13px;padding:8px 2px}
+
   /* ---- スマホ対応 ---- */
   @media (max-width: 720px){
     body{font-size:15px}
@@ -169,8 +197,11 @@ applyTheme(localStorage.getItem(THEME_KEY)||"system");
 
 const SEVCOLOR = {0:"var(--clear)",1:"var(--advisory)",2:"var(--warning)",3:"var(--emergency)"};
 const SEVINK   = {1:"var(--advisory-ink)"};
-let items=[], selId=null, xmlOpen=false;
-const xmlCache={}; // id -> 整形済みXML（電文は不変なので id 単位でキャッシュ）
+let items=[], selId=null, detailSig=null;
+let xmlOpen=false, treeOpen=false, mapOpen=false;
+const rawCache={};  // id -> 生XML文字列（"" は原文なし）。全ビューアで共有
+const xmlCache={};  // id -> 整形済みXML
+const QUAKE=["緊急地震速報","地震情報","震度速報"];
 
 function pad(n){return String(n).padStart(2,"0");}
 function fmt(ms){if(!ms)return"—";const d=new Date(ms);
@@ -220,6 +251,11 @@ function renderList(){
 }
 
 function renderDetail(it){
+  // ポーリング(1.5秒)で内容が変わらなければ再構築しない。開いているツリー/地図の
+  // 折りたたみ状態などを壊さず、点滅も防ぐ。受信時刻は再送で微変動するため除外。
+  const sig=[it.id,it.read,it.severity,(it.kinds||[]).join(","),it.infoType,it.allowed,it.headline].join("|");
+  if(sig===detailSig) return;
+  detailSig=sig;
   const sub=[`情報種別<b>${esc(it.category||"—")}</b>`,
              `電文種別<b>${esc(it.alertType||"—")}</b>`,
              `受信系統<b>${esc(it.channel||"—")}</b>`,
@@ -227,7 +263,7 @@ function renderDetail(it){
              `発表時刻<b>${esc(fmtRep(it.reportTime))}</b>`,
              `受信時刻<b>${esc(fmt(it.rxTimeMs))}</b>`,
              `電文時刻<b>${esc(it.packetTime||"—")}</b>`];
-  const hasXml = it.xml!==false; // XML link always offered; server 404s if none
+  const isQuake=QUAKE.includes(it.category);
   $("#detail").innerHTML=
     `<div class="dhead">${sevtag(it)}<span class="it">${esc(it.title||"")}</span>${it.allowed===false?'<span class="it">表示対象外</span>':''}</div>`+
     `<h1 class="darea">${esc(it.areaName||it.headTitle||"")}</h1>`+
@@ -235,17 +271,33 @@ function renderDetail(it){
     ((it.kinds||[]).length?`<p class="sech">発表中の種別</p><div class="kinds">${it.kinds.map(k=>`<span class="kind">${esc(k)}</span>`).join("")}</div>`:"")+
     (it.headline?`<p class="sech">本文</p><div class="headline">${esc(it.headline)}</div>`:"")+
     `<div class="daction">`+
+      (isQuake?`<button class="btn" id="mapBtn">地図表示</button>`:"")+
+      `<button class="btn" id="treeBtn">XMLビューア</button>`+
       `<button class="btn" id="xmlBtn">XML原文を表示</button>`+
       `<a class="btn" href="/api/xml?id=${it.id}" target="_blank" rel="noopener">別タブで開く</a>`+
       `<button class="btn" id="toggleRead">${it.read?"未読に戻す":"既読にする"}</button>`+
     `</div>`+
+    (isQuake?`<div class="mapwrap" id="mapBox"></div>`:"")+
+    `<div class="xtree" id="xtreeBox"></div>`+
     `<pre class="xml" id="xmlBox"></pre>`;
   $("#xmlBtn").onclick=()=>loadXml(it.id);
+  $("#treeBtn").onclick=()=>loadTree(it.id);
+  if(isQuake) $("#mapBtn").onclick=()=>loadMap(it.id);
   $("#toggleRead").onclick=()=>setRead(it.id,!it.read);
-  // ポーリング再描画で <pre> は作り直されるので、開いていたら復元する。
-  // キャッシュがあれば同期的に描画され点滅しない。
+  // 開いていたパネルを（新しい項目でも）復元。キャッシュがあれば同期的に描かれる。
   if(xmlOpen) fillXml(it.id, $("#xmlBox"));
-  void hasXml;
+  if(treeOpen) fillTree(it.id, $("#xtreeBox"));
+  if(mapOpen && isQuake) fillMap(it.id, $("#mapBox")); else mapOpen=mapOpen&&isQuake;
+}
+
+// 生XMLを1度だけ取得して共有キャッシュする（原文なしは ""）。
+async function getRaw(id){
+  if(rawCache[id]!==undefined) return rawCache[id];
+  try{
+    const res=await fetch(`/api/xml?id=${id}`);
+    rawCache[id]=res.ok?(await res.text()).trim():"";
+  }catch(e){ return null; } // 失敗はキャッシュせず次回再取得
+  return rawCache[id];
 }
 
 // 実機電文は 1 行の長大 XML で届くので、タグ階層にインデントを付けて読める形に
@@ -265,31 +317,195 @@ function prettyXml(raw){
   return out;
 }
 
-// ボタンでの開閉トグル。
+// ---- XML原文（整形テキスト） ----
 function loadXml(id){
   if(xmlOpen){ xmlOpen=false; $("#xmlBox").classList.remove("show"); return; }
-  xmlOpen=true;
-  fillXml(id, $("#xmlBox"));
+  xmlOpen=true; fillXml(id, $("#xmlBox"));
 }
-
-// XML を表示する。取得済みならキャッシュから同期描画（点滅・再フェッチなし）、
-// 未取得なら 1 度だけ取得して整形・キャッシュする。
 async function fillXml(id, box){
   box.classList.add("show");
   if(xmlCache[id]!==undefined){ box.textContent=xmlCache[id]; return; }
   box.textContent="読み込み中…";
-  try{
-    const res=await fetch(`/api/xml?id=${id}`);
-    const raw=res.ok?(await res.text()).trim():"";
-    xmlCache[id]=raw?prettyXml(raw):"（XML原文がありません）";
-    box.textContent=xmlCache[id];
-  }catch(e){
-    box.textContent="（XML原文の取得に失敗しました）"; // 失敗はキャッシュせず次回再取得
+  const raw=await getRaw(id);
+  if(raw===null){ box.textContent="（XML原文の取得に失敗しました）"; return; }
+  xmlCache[id]=raw?prettyXml(raw):"（XML原文がありません）";
+  box.textContent=xmlCache[id];
+}
+
+// ---- XMLビューア（折りたたみツリー） ----
+function loadTree(id){
+  if(treeOpen){ treeOpen=false; $("#xtreeBox").classList.remove("show"); return; }
+  treeOpen=true; fillTree(id, $("#xtreeBox"));
+}
+async function fillTree(id, box){
+  box.classList.add("show");
+  box.textContent="読み込み中…";
+  const raw=await getRaw(id);
+  if(raw===null){ box.textContent="（XML原文の取得に失敗しました）"; return; }
+  if(!raw){ box.textContent="（XML原文がありません）"; return; }
+  const doc=new DOMParser().parseFromString(raw,"application/xml");
+  if(doc.querySelector("parsererror")){ box.textContent="（XMLの解析に失敗しました）"; return; }
+  box.textContent="";
+  box.appendChild(buildTree(doc.documentElement));
+}
+function tagHtml(node,close){
+  const attrs=close?"":[...node.attributes].map(a=>
+    ` <span class="xattr">${esc(a.name)}</span><span class="xpunct">="</span><span class="xval">${esc(a.value)}</span><span class="xpunct">"</span>`).join("");
+  return `<span class="xpunct">&lt;${close?"/":""}</span><span class="xtag">${esc(node.nodeName)}</span>${attrs}<span class="xpunct">&gt;</span>`;
+}
+function buildTree(node){
+  const el=document.createElement("div"); el.className="xnode";
+  const kids=[...node.children];
+  const head=document.createElement("div"); head.className="xline";
+  if(kids.length){
+    const tg=document.createElement("span"); tg.className="xtoggle"; tg.textContent="▾"; head.appendChild(tg);
+    const open=document.createElement("span");
+    open.innerHTML=tagHtml(node,false)+`<span class="xellipsis">…${tagHtml(node,true)}</span>`;
+    head.appendChild(open);
+    el.appendChild(head);
+    const cb=document.createElement("div"); cb.className="xchildren";
+    for(const k of kids) cb.appendChild(buildTree(k));
+    el.appendChild(cb);
+    const close=document.createElement("div"); close.className="xline xclose";
+    close.innerHTML=`<span class="xspacer"> </span>`+tagHtml(node,true);
+    el.appendChild(close);
+    tg.style.cursor="pointer";
+    tg.onclick=()=>{ const c=el.classList.toggle("collapsed"); tg.textContent=c?"▸":"▾"; };
+  }else{
+    const txt=(node.textContent||"").trim();
+    head.innerHTML=`<span class="xspacer"> </span>`+tagHtml(node,false)+
+      (txt?`<span class="xtext">${esc(txt)}</span>`+tagHtml(node,true):"");
+    el.appendChild(head);
   }
+  return el;
+}
+
+// ---- 地震マップ（オフライン都道府県コロプレス＋震源） ----
+const INT_RANK={"1":1,"2":2,"3":3,"4":4,"5-":5,"5弱":5,"5+":6,"5強":6,"6-":7,"6弱":7,"6+":8,"6強":8,"7":9};
+const INT_COLOR={1:"#f2f2ff",2:"#63a9ff",3:"#0041ff",4:"#f6e27a",5:"#ffe600",6:"#ff9900",7:"#ff2800",8:"#a50021",9:"#b40068"};
+const intLabel=(s)=>String(s).replace("弱","-").replace("強","+");
+const intRank=(s)=>INT_RANK[s]||INT_RANK[intLabel(s)]||0;
+const intFill=(s)=>INT_COLOR[intRank(s)]||"#888";
+const intInk=(s)=>{const r=intRank(s);return (r===1||r===4||r===5)?"#111":"#fff";};
+
+let geoData=null, geoPromise=null;
+function getGeo(){
+  if(geoData) return Promise.resolve(geoData);
+  if(!geoPromise) geoPromise=fetch("/assets/jp-pref.geojson").then(r=>r.ok?r.json():null)
+    .then(d=>{geoData=d;return d;}).catch(()=>null);
+  return geoPromise;
+}
+// ネームスペース接頭辞(jmx_eb: 等)を無視した要素名。環境差(localNameが
+// 接頭辞付きの場合)にも耐えるよう ":" 以降を取る。
+function lname(c){return (c.localName||c.nodeName||c.tagName||"").split(":").pop();}
+function byLocal(root,name){const out=[];(function w(n){for(const c of n.children){if(lname(c)===name)out.push(c);w(c);}})(root);return out;}
+function firstLocal(root,name){let f=null;(function w(n){for(const c of n.children){if(f)return;if(lname(c)===name){f=c;return;}w(c);}})(root);return f;}
+function directChild(node,name){return [...node.children].find(c=>lname(c)===name)||null;}
+function eachRing(g,cb){if(!g)return;if(g.type==="Polygon")g.coordinates.forEach(cb);else if(g.type==="MultiPolygon")g.coordinates.forEach(p=>p.forEach(cb));}
+
+// 都道府県ごとの最大震度（Pref直下のMaxInt、無ければArea群の最大）。
+function prefIntensities(doc){
+  const map={};
+  for(const pref of byLocal(doc,"Pref")){
+    const nm=directChild(pref,"Name"); if(!nm) continue;
+    const name=nm.textContent.trim();
+    let mi=directChild(pref,"MaxInt");
+    let val=mi?mi.textContent.trim():"";
+    if(!val){ let best=0; for(const area of byLocal(pref,"Area")){const am=directChild(area,"MaxInt"); if(am){const r=intRank(am.textContent.trim()); if(r>best){best=r;val=am.textContent.trim();}}} }
+    if(val && intRank(val)>0 && (!map[name]||intRank(val)>intRank(map[name]))) map[name]=val;
+  }
+  return map;
+}
+function epicenter(doc){
+  const hyp=firstLocal(doc,"Hypocenter");
+  const cands=[]; if(hyp) cands.push(...byLocal(hyp,"Coordinate")); cands.push(...byLocal(doc,"Coordinate"));
+  for(const c of cands){
+    const m=(c.textContent||"").trim().match(/[+-]\d+(?:\.\d+)?/g);
+    if(m&&m.length>=2){const lat=parseFloat(m[0]),lng=parseFloat(m[1]);
+      if(lat>=20&&lat<=50&&lng>=120&&lng<=155) return {lat,lng,depth:m[2]?Math.round(Math.abs(parseFloat(m[2]))/1000):null};}
+  }
+  return null;
+}
+
+const MAPW=600, MAPH=680, MAPPAD=14;
+function loadMap(id){
+  if(mapOpen){ mapOpen=false; $("#mapBox").classList.remove("show"); return; }
+  mapOpen=true; fillMap(id, $("#mapBox"));
+}
+async function fillMap(id, box){
+  box.classList.add("show");
+  box.innerHTML='<div class="mapmsg">地図を作成中…</div>';
+  const raw=await getRaw(id);
+  if(raw===null){ box.innerHTML='<div class="mapmsg">XML原文の取得に失敗しました</div>'; return; }
+  if(!raw){ box.innerHTML='<div class="mapmsg">この電文にはXML原文がありません</div>'; return; }
+  const geo=await getGeo();
+  if(!geo){ box.innerHTML='<div class="mapmsg">地図データを読み込めませんでした</div>'; return; }
+  const doc=new DOMParser().parseFromString(raw,"application/xml");
+  if(doc.querySelector("parsererror")){ box.innerHTML='<div class="mapmsg">XMLの解析に失敗しました</div>'; return; }
+  box.innerHTML=buildMap(geo, prefIntensities(doc), epicenter(doc), firstLocal(doc,"Magnitude"), firstLocal(doc,"Hypocenter"));
+}
+function buildMap(geo, prefInt, epi, magEl, hypEl){
+  const hasInt=Object.keys(prefInt).length>0;
+  if(!hasInt && !epi) return '<div class="mapmsg">震度・震源の情報が含まれていません</div>';
+  // 表示範囲を被災都道府県＋震源に合わせる。
+  const bb={minx:Infinity,miny:Infinity,maxx:-Infinity,maxy:-Infinity};
+  const grow=(x,y)=>{bb.minx=Math.min(bb.minx,x);bb.maxx=Math.max(bb.maxx,x);bb.miny=Math.min(bb.miny,y);bb.maxy=Math.max(bb.maxy,y);};
+  for(const f of geo.features){ if(prefInt[f.properties.nam_ja]!==undefined) eachRing(f.geometry,ring=>{for(const[x,y]of ring)grow(x,y);}); }
+  if(epi) grow(epi.lng,epi.lat);
+  if(!isFinite(bb.minx)){ bb.minx=122;bb.maxx=149;bb.miny=24;bb.maxy=46; }
+  // 余白と最小スパンを確保。
+  let sx=bb.maxx-bb.minx, sy=bb.maxy-bb.miny;
+  const MIN=2.2; if(sx<MIN){const c=(bb.minx+bb.maxx)/2;bb.minx=c-MIN/2;bb.maxx=c+MIN/2;} if(sy<MIN){const c=(bb.miny+bb.maxy)/2;bb.miny=c-MIN/2;bb.maxy=c+MIN/2;}
+  sx=bb.maxx-bb.minx; sy=bb.maxy-bb.miny;
+  bb.minx-=sx*0.12; bb.maxx+=sx*0.12; bb.miny-=sy*0.12; bb.maxy+=sy*0.12;
+  const midLat=(bb.miny+bb.maxy)/2, cos=Math.cos(midLat*Math.PI/180);
+  const gw=(bb.maxx-bb.minx)*cos, gh=bb.maxy-bb.miny;
+  const s=Math.min((MAPW-2*MAPPAD)/gw,(MAPH-2*MAPPAD)/gh);
+  const ox=MAPPAD+((MAPW-2*MAPPAD)-gw*s)/2, oy=MAPPAD+((MAPH-2*MAPPAD)-gh*s)/2;
+  const proj=(lng,lat)=>[ox+(lng-bb.minx)*cos*s, MAPH-oy-(lat-bb.miny)*s];
+  const ringPath=(ring)=>ring.map((p,i)=>{const[px,py]=proj(p[0],p[1]);return (i?"L":"M")+px.toFixed(1)+" "+py.toFixed(1);}).join("")+"Z";
+  const featPath=(f)=>{let d="";eachRing(f.geometry,ring=>{d+=ringPath(ring);});return d;};
+
+  let paths="", labels="";
+  for(const f of geo.features){
+    const iv=prefInt[f.properties.nam_ja];
+    const on=iv!==undefined;
+    paths+=`<path d="${featPath(f)}" fill="${on?intFill(iv):"#20232b"}" stroke="${on?"#0008":"#3a3f4a"}" stroke-width="${on?0.9:0.5}"/>`;
+    if(on){ const c={minx:Infinity,miny:Infinity,maxx:-Infinity,maxy:-Infinity};
+      eachRing(f.geometry,ring=>{for(const[x,y]of ring){c.minx=Math.min(c.minx,x);c.maxx=Math.max(c.maxx,x);c.miny=Math.min(c.miny,y);c.maxy=Math.max(c.maxy,y);}});
+      const[lx,ly]=proj((c.minx+c.maxx)/2,(c.miny+c.maxy)/2);
+      labels+=`<text x="${lx.toFixed(1)}" y="${(ly+4).toFixed(1)}" text-anchor="middle" font-size="15" font-weight="700" fill="${intInk(iv)}" stroke="#0006" stroke-width="0.4">${esc(intLabel(iv))}</text>`;
+    }
+  }
+  let epiSvg="";
+  if(epi){ const[ex,ey]=proj(epi.lng,epi.lat);
+    epiSvg=`<g stroke="#fff" stroke-width="3" stroke-linecap="round">`+
+      `<line x1="${(ex-10).toFixed(1)}" y1="${(ey-10).toFixed(1)}" x2="${(ex+10).toFixed(1)}" y2="${(ey+10).toFixed(1)}"/>`+
+      `<line x1="${(ex+10).toFixed(1)}" y1="${(ey-10).toFixed(1)}" x2="${(ex-10).toFixed(1)}" y2="${(ey+10).toFixed(1)}"/></g>`+
+      `<g stroke="#e0002a" stroke-width="1.5" stroke-linecap="round">`+
+      `<line x1="${(ex-10).toFixed(1)}" y1="${(ey-10).toFixed(1)}" x2="${(ex+10).toFixed(1)}" y2="${(ey+10).toFixed(1)}"/>`+
+      `<line x1="${(ex+10).toFixed(1)}" y1="${(ey-10).toFixed(1)}" x2="${(ex-10).toFixed(1)}" y2="${(ey+10).toFixed(1)}"/></g>`;
+  }
+  // 情報行
+  const info=[];
+  if(hypEl){ const hn=directChild(hypEl,"Area"); const nm=hn?directChild(hn,"Name"):null; if(nm) info.push(`震源<b>${esc(nm.textContent.trim())}</b>`); }
+  if(magEl && magEl.textContent.trim()) info.push(`規模<b>M${esc(magEl.textContent.trim())}</b>`);
+  if(epi && epi.depth!=null) info.push(`深さ<b>約${epi.depth}km</b>`);
+  if(hasInt){ let mx=""; for(const v of Object.values(prefInt)) if(intRank(v)>intRank(mx)) mx=v; info.push(`最大震度<b>${esc(intLabel(mx))}</b>`); }
+  // 凡例（この電文に出現した震度）
+  const present=[...new Set(Object.values(prefInt).map(intRank))].sort((a,b)=>a-b);
+  const legend=present.map(r=>{const s=Object.keys(INT_RANK).find(k=>INT_RANK[k]===r&&!k.includes("弱")&&!k.includes("強"))||r;
+    return `<span class="lgchip" style="background:${INT_COLOR[r]};color:${(r===1||r===4||r===5)?"#111":"#fff"}">震度 ${esc(intLabel(s))}</span>`;}).join("");
+
+  return (info.length?`<div class="mapinfo">${info.map(x=>`<span>${x}</span>`).join("")}</div>`:"")+
+    `<svg class="mapsvg" viewBox="0 0 ${MAPW} ${MAPH}" preserveAspectRatio="xMidYMid meet">`+
+    paths+labels+epiSvg+`</svg>`+
+    (legend?`<div class="maplegend">${legend}${epi?'<span class="lgchip" style="background:#333;color:#fff">✕ 震源</span>':""}</div>`
+      :(epi?`<div class="maplegend"><span class="lgchip" style="background:#333;color:#fff">✕ 震源</span></div>`:""));
 }
 
 function open(id){
-  selId=id;
+  selId=id; detailSig=null; // 選択変更時は必ず再描画
   const it=items.find(i=>i.id===id);
   if(it && !it.read) setRead(id,true); else { renderList(); if(it) renderDetail(it); }
 }

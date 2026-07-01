@@ -13,6 +13,10 @@ const ADMIN_HTML: &str = include_str!("../wwwroot/admin.html");
 const INDEX_HTML: &str = include_str!("../wwwroot/index.html");
 /// Real standby artwork, served to the web kiosk for the「リアル」style.
 const STANDBY_JPG: &[u8] = include_bytes!("../assets/screen/standby.jpg");
+/// Simplified 47-都道府県 polygons (choropleth base for the 地震マップ). Rendered
+/// to SVG client-side; fetched once and cached by the page. Derived from
+/// dataofjapan/land (japan.geojson), heavily simplified for embedding.
+const JP_PREF_GEOJSON: &str = include_str!("../wwwroot/jp-pref.geojson");
 
 /// A running web server; can be stopped at runtime (used by the settings UI).
 pub struct WebHandle {
@@ -75,6 +79,9 @@ fn route(
         "/" => html(INDEX_HTML),        // public J-ALERT display
         "/admin" | "/inbox" => html(ADMIN_HTML), // management (緊急情報一覧)
         "/assets/standby.jpg" => with_type(STANDBY_JPG.to_vec(), "image/jpeg"),
+        "/assets/jp-pref.geojson" => {
+            with_type(JP_PREF_GEOJSON.as_bytes().to_vec(), "application/geo+json; charset=utf-8")
+        }
         "/healthz" => text("ok"),
         "/api/state" => json(state_json(&state.lock().unwrap())),
         "/api/xml" => {
