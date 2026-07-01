@@ -169,7 +169,8 @@ applyTheme(localStorage.getItem(THEME_KEY)||"system");
 
 const SEVCOLOR = {0:"var(--clear)",1:"var(--advisory)",2:"var(--warning)",3:"var(--emergency)"};
 const SEVINK   = {1:"var(--advisory-ink)"};
-let items=[], selId=null;
+let items=[], selId=null, xmlOpen=false;
+const xmlCache={}; // id -> 整形済みXML（電文は不変なので id 単位でキャッシュ）
 
 function pad(n){return String(n).padStart(2,"0");}
 function fmt(ms){if(!ms)return"—";const d=new Date(ms);
@@ -219,7 +220,6 @@ function renderList(){
 }
 
 function renderDetail(it){
-  const xmlPrev = $("#xmlBox") && $("#xmlBox").classList.contains("show");
   const sub=[`情報種別<b>${esc(it.category||"—")}</b>`,
              `電文種別<b>${esc(it.alertType||"—")}</b>`,
              `受信系統<b>${esc(it.channel||"—")}</b>`,
@@ -242,7 +242,9 @@ function renderDetail(it){
     `<pre class="xml" id="xmlBox"></pre>`;
   $("#xmlBtn").onclick=()=>loadXml(it.id);
   $("#toggleRead").onclick=()=>setRead(it.id,!it.read);
-  if(xmlPrev) loadXml(it.id);
+  // ポーリング再描画で <pre> は作り直されるので、開いていたら復元する。
+  // キャッシュがあれば同期的に描画され点滅しない。
+  if(xmlOpen) fillXml(it.id, $("#xmlBox"));
   void hasXml;
 }
 
@@ -263,18 +265,26 @@ function prettyXml(raw){
   return out;
 }
 
-async function loadXml(id){
-  const box=$("#xmlBox");
-  if(box.classList.contains("show")){ box.classList.remove("show"); return; }
+// ボタンでの開閉トグル。
+function loadXml(id){
+  if(xmlOpen){ xmlOpen=false; $("#xmlBox").classList.remove("show"); return; }
+  xmlOpen=true;
+  fillXml(id, $("#xmlBox"));
+}
+
+// XML を表示する。取得済みならキャッシュから同期描画（点滅・再フェッチなし）、
+// 未取得なら 1 度だけ取得して整形・キャッシュする。
+async function fillXml(id, box){
   box.classList.add("show");
+  if(xmlCache[id]!==undefined){ box.textContent=xmlCache[id]; return; }
   box.textContent="読み込み中…";
   try{
     const res=await fetch(`/api/xml?id=${id}`);
-    if(!res.ok){ box.textContent="（XML原文がありません）"; return; }
-    const raw=(await res.text()).trim();
-    box.textContent=raw?prettyXml(raw):"（XML原文がありません）";
+    const raw=res.ok?(await res.text()).trim():"";
+    xmlCache[id]=raw?prettyXml(raw):"（XML原文がありません）";
+    box.textContent=xmlCache[id];
   }catch(e){
-    box.textContent="（XML原文の取得に失敗しました）";
+    box.textContent="（XML原文の取得に失敗しました）"; // 失敗はキャッシュせず次回再取得
   }
 }
 
