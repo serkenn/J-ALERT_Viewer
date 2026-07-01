@@ -139,6 +139,19 @@
   .lgchip{font-size:11px;padding:2px 8px;border-radius:4px;font-weight:700}
   .mapmsg{color:#aab;font-size:13px;padding:8px 2px}
 
+  /* 地域別 警報・注意報 */
+  .warns{display:none;margin-top:4px;background:var(--surface);border:1px solid var(--border);
+    border-radius:8px;padding:14px 16px;max-height:56vh;overflow:auto}
+  .warns.show{display:block}
+  .whead{color:var(--text-sub);font-size:13px;margin:0 0 12px}
+  .wpref{font-weight:700;font-size:14px;color:var(--text);margin:14px 0 8px;padding-bottom:4px;
+    border-bottom:1px solid var(--border)}
+  .wpref:first-child{margin-top:0}
+  .warea{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:5px 0}
+  .waname{min-width:6.5em;font-weight:600;font-size:14px}
+  .wchip{font-size:13px;font-weight:700;padding:3px 10px;border-radius:5px;line-height:1.5}
+  .wmsg{color:var(--text-sub);font-size:13px;padding:8px 2px}
+
   /* ---- スマホ対応 ---- */
   @media (max-width: 720px){
     body{font-size:15px}
@@ -198,7 +211,7 @@ applyTheme(localStorage.getItem(THEME_KEY)||"system");
 const SEVCOLOR = {0:"var(--clear)",1:"var(--advisory)",2:"var(--warning)",3:"var(--emergency)"};
 const SEVINK   = {1:"var(--advisory-ink)"};
 let items=[], selId=null, detailSig=null;
-let xmlOpen=false, treeOpen=false, mapOpen=false;
+let xmlOpen=false, treeOpen=false, mapOpen=false, warnOpen=false;
 const rawCache={};  // id -> 生XML文字列（"" は原文なし）。全ビューアで共有
 const xmlCache={};  // id -> 整形済みXML
 const QUAKE=["緊急地震速報","地震情報","震度速報"];
@@ -264,6 +277,7 @@ function renderDetail(it){
              `受信時刻<b>${esc(fmt(it.rxTimeMs))}</b>`,
              `電文時刻<b>${esc(it.packetTime||"—")}</b>`];
   const isQuake=QUAKE.includes(it.category);
+  const isWeather=it.category==="気象情報";
   $("#detail").innerHTML=
     `<div class="dhead">${sevtag(it)}<span class="it">${esc(it.title||"")}</span>${it.allowed===false?'<span class="it">表示対象外</span>':''}</div>`+
     `<h1 class="darea">${esc(it.areaName||it.headTitle||"")}</h1>`+
@@ -272,22 +286,26 @@ function renderDetail(it){
     (it.headline?`<p class="sech">本文</p><div class="headline">${esc(it.headline)}</div>`:"")+
     `<div class="daction">`+
       (isQuake?`<button class="btn" id="mapBtn">地図表示</button>`:"")+
+      (isWeather?`<button class="btn" id="warnBtn">地域別に表示</button>`:"")+
       `<button class="btn" id="treeBtn">XMLビューア</button>`+
       `<button class="btn" id="xmlBtn">XML原文を表示</button>`+
       `<a class="btn" href="/api/xml?id=${it.id}" target="_blank" rel="noopener">別タブで開く</a>`+
       `<button class="btn" id="toggleRead">${it.read?"未読に戻す":"既読にする"}</button>`+
     `</div>`+
     (isQuake?`<div class="mapwrap" id="mapBox"></div>`:"")+
+    (isWeather?`<div class="warns" id="warnBox"></div>`:"")+
     `<div class="xtree" id="xtreeBox"></div>`+
     `<pre class="xml" id="xmlBox"></pre>`;
   $("#xmlBtn").onclick=()=>loadXml(it.id);
   $("#treeBtn").onclick=()=>loadTree(it.id);
   if(isQuake) $("#mapBtn").onclick=()=>loadMap(it.id);
+  if(isWeather) $("#warnBtn").onclick=()=>loadWarn(it.id);
   $("#toggleRead").onclick=()=>setRead(it.id,!it.read);
   // 開いていたパネルを（新しい項目でも）復元。キャッシュがあれば同期的に描かれる。
   if(xmlOpen) fillXml(it.id, $("#xmlBox"));
   if(treeOpen) fillTree(it.id, $("#xtreeBox"));
   if(mapOpen && isQuake) fillMap(it.id, $("#mapBox")); else mapOpen=mapOpen&&isQuake;
+  if(warnOpen && isWeather) fillWarn(it.id, $("#warnBox")); else warnOpen=warnOpen&&isWeather;
 }
 
 // 生XMLを1度だけ取得して共有キャッシュする（原文なしは ""）。
@@ -502,6 +520,83 @@ function buildMap(geo, prefInt, epi, magEl, hypEl){
     paths+labels+epiSvg+`</svg>`+
     (legend?`<div class="maplegend">${legend}${epi?'<span class="lgchip" style="background:#333;color:#fff">✕ 震源</span>':""}</div>`
       :(epi?`<div class="maplegend"><span class="lgchip" style="background:#333;color:#fff">✕ 震源</span></div>`:""));
+}
+
+// ---- 地域別 警報・注意報（気象電文をグラフィカルに） ----
+const PREF_BY_CODE={"01":"北海道","02":"青森県","03":"岩手県","04":"宮城県","05":"秋田県","06":"山形県","07":"福島県","08":"茨城県","09":"栃木県","10":"群馬県","11":"埼玉県","12":"千葉県","13":"東京都","14":"神奈川県","15":"新潟県","16":"富山県","17":"石川県","18":"福井県","19":"山梨県","20":"長野県","21":"岐阜県","22":"静岡県","23":"愛知県","24":"三重県","25":"滋賀県","26":"京都府","27":"大阪府","28":"兵庫県","29":"奈良県","30":"和歌山県","31":"鳥取県","32":"島根県","33":"岡山県","34":"広島県","35":"山口県","36":"徳島県","37":"香川県","38":"愛媛県","39":"高知県","40":"福岡県","41":"佐賀県","42":"長崎県","43":"熊本県","44":"大分県","45":"宮崎県","46":"鹿児島県","47":"沖縄県"};
+// 種別名 → レベル（色・接尾辞）。特別警報→警報→注意報の順で判定。
+function classifyWarn(name){
+  const L=(rank,bg,ink)=>({rank,bg,ink});
+  let suf="";
+  if(name.includes("特別警報")) return Object.assign({suf:"特別警報",stem:name.replace("特別警報","")},L(4,"#b40068","#fff"));
+  if(name.includes("警戒情報")) return Object.assign({suf:"警戒情報",stem:name.replace("警戒情報","")},L(3,"#ff9900","#111"));
+  if(name.endsWith("警報")){suf="警報";return Object.assign({suf,stem:name.slice(0,-2)},L(3,"#ff2800","#fff"));}
+  if(name.endsWith("注意報")){suf="注意報";return Object.assign({suf,stem:name.slice(0,-3)},L(1,"#ffe600","#111"));}
+  return Object.assign({suf:"",stem:name},L(2,"#8a94a6","#fff"));
+}
+// 生XMLから 地域→種別 を集約。市町村等 Warning を優先。
+function weatherWarnings(doc){
+  const warns=byLocal(doc,"Warning");
+  const wtype=(w)=>((w.getAttribute&&w.getAttribute("type"))||"");
+  const w=warns.find(x=>wtype(x).includes("市町村"))||warns.find(x=>wtype(x).includes("府県"))||warns[0];
+  if(!w) return [];
+  const list=[], byName={};
+  for(const item of byLocal(w,"Item")){
+    const kinds=[];
+    for(const k of byLocal(item,"Kind")){
+      const nm=directChild(k,"Name"); if(!nm) continue;
+      const st=directChild(k,"Status"); const status=st?st.textContent.trim():"";
+      if(status==="解除"||status==="なし") continue;
+      const v=nm.textContent.trim(); if(v) kinds.push(v);
+    }
+    if(!kinds.length) continue;
+    for(const ar of byLocal(item,"Area")){
+      const an=directChild(ar,"Name"); if(!an) continue;
+      const name=an.textContent.trim(); if(!name) continue;
+      const ac=directChild(ar,"Code"); const code=ac?ac.textContent.trim():"";
+      let e=byName[name]; if(!e){ e=byName[name]={name,code,kinds:[]}; list.push(e); }
+      for(const kn of kinds) if(!e.kinds.includes(kn)) e.kinds.push(kn);
+    }
+  }
+  return list;
+}
+// 1地域の種別群を接尾辞ごとにまとめてチップ列に（大雨・雷・洪水注意報 のように）。
+function warnChips(kinds){
+  const groups={};
+  for(const nm of kinds){ const c=classifyWarn(nm); const key=c.suf||("＿"+nm);
+    if(!groups[key]) groups[key]={rank:c.rank,bg:c.bg,ink:c.ink,suf:c.suf,stems:[]};
+    if(!groups[key].stems.includes(c.stem)) groups[key].stems.push(c.stem); }
+  return Object.values(groups).sort((a,b)=>b.rank-a.rank).map(g=>{
+    const label=g.suf?g.stems.join("・")+g.suf:g.stems.join("・");
+    return `<span class="wchip" style="background:${g.bg};color:${g.ink}">${esc(label)}</span>`;
+  }).join(" ");
+}
+function loadWarn(id){
+  if(warnOpen){ warnOpen=false; $("#warnBox").classList.remove("show"); return; }
+  warnOpen=true; fillWarn(id, $("#warnBox"));
+}
+async function fillWarn(id, box){
+  box.classList.add("show");
+  box.innerHTML='<div class="wmsg">読み込み中…</div>';
+  const raw=await getRaw(id);
+  if(raw===null){ box.innerHTML='<div class="wmsg">XML原文の取得に失敗しました</div>'; return; }
+  if(!raw){ box.innerHTML='<div class="wmsg">この電文にはXML原文がありません</div>'; return; }
+  const doc=new DOMParser().parseFromString(raw,"application/xml");
+  if(doc.querySelector("parsererror")){ box.innerHTML='<div class="wmsg">XMLの解析に失敗しました</div>'; return; }
+  const areas=weatherWarnings(doc);
+  if(!areas.length){ box.innerHTML='<div class="wmsg">地域別の警報・注意報が含まれていません</div>'; return; }
+  // 都道府県コード(市町村コード先頭2桁)でグループ化。
+  const groups={}, order=[];
+  for(const a of areas){ const pc=(a.code||"").slice(0,2); const pref=PREF_BY_CODE[pc]||"その他";
+    if(!groups[pref]){ groups[pref]=[]; order.push([pc,pref]); } groups[pref].push(a); }
+  order.sort((x,y)=>x[0]<y[0]?-1:x[0]>y[0]?1:0);
+  const multi=order.length>1;
+  let html=`<div class="whead">${areas.length} 地域に発表中（本文に含まれない市町村ごとの内訳）</div>`;
+  for(const [,pref] of order){
+    if(multi) html+=`<div class="wpref">${esc(pref)}</div>`;
+    for(const a of groups[pref]) html+=`<div class="warea"><span class="waname">${esc(a.name)}</span>${warnChips(a.kinds)}</div>`;
+  }
+  box.innerHTML=html;
 }
 
 function open(id){
