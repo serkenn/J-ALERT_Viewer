@@ -114,7 +114,8 @@ impl Category {
             Category::Eew
         } else if s.contains("震度速報") {
             Category::SeismicIntensity
-        } else if s.contains("地震") {
+        } else if s.contains("地震") || s.contains("震源") || s.contains("震度") {
+            // 「震源・震度情報」等（"地震" の文字を含まない見出し）も地震情報として扱う。
             Category::Earthquake
         } else if s.contains("津波") {
             Category::Tsunami

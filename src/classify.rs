@@ -490,6 +490,21 @@ mod tests {
     }
 
     #[test]
+    fn hypocenter_report_classifies_as_earthquake() {
+        // 「震源・震度情報」は "地震" の文字を含まないが地震情報として扱う。
+        assert_eq!(Category::from_sub_type("震源・震度情報"), Category::Earthquake);
+        // サブタイプが見出しに設定された実電文でも地震カテゴリになること。
+        let line = serde_json::json!({
+            "decoded": true, "rx_time_ms": 5i64, "alert_type": "IOEQ",
+            "alert_sub_type": "震源・震度情報", "info_type": "発表",
+            "head_title": "震源・震度情報",
+        })
+        .to_string();
+        let c = from_json_line(&line).unwrap();
+        assert_eq!(c.category, Category::Earthquake);
+    }
+
+    #[test]
     fn non_decoded_is_ignored() {
         assert!(from_json_line(r#"{"decoded":false,"chunk_type":"abcd"}"#).is_none());
     }

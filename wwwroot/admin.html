@@ -276,8 +276,10 @@ function renderDetail(it){
              `発表時刻<b>${esc(fmtRep(it.reportTime))}</b>`,
              `受信時刻<b>${esc(fmt(it.rxTimeMs))}</b>`,
              `電文時刻<b>${esc(it.packetTime||"—")}</b>`];
-  const isQuake=QUAKE.includes(it.category);
-  const isWeather=it.category==="気象情報";
+  // カテゴリ分類がズレても地図/地域別が出るよう、電文種別コードでも判定する
+  // （IOEQ=地震/震度速報, EPRQ=緊急地震速報, WRMA=気象警報・注意報）。
+  const isQuake=QUAKE.includes(it.category)||["IOEQ","EPRQ"].includes(it.alertType);
+  const isWeather=it.category==="気象情報"||it.alertType==="WRMA";
   $("#detail").innerHTML=
     `<div class="dhead">${sevtag(it)}<span class="it">${esc(it.title||"")}</span>${it.allowed===false?'<span class="it">表示対象外</span>':''}</div>`+
     `<h1 class="darea">${esc(it.areaName||it.headTitle||"")}</h1>`+
